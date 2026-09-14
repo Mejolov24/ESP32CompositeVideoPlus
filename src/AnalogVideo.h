@@ -54,34 +54,29 @@
     #define SUPPORT_PAL 1
 #endif
 
-typedef enum {
-    SUBSAMPLING_444 = 0,
-    SUBSAMPLING_422,
-    SUBSAMPLING_400,
-} subsampling_t;
+#define SUBSAMPLING_444 0
+#define SUBSAMPLING_422 1
+#define SUBSAMPLING_400 2
+typedef int subsampling_t;
 
 #define SUBSAMPLING_BYTES(sub) ( \
     (sub) == SUBSAMPLING_444 ? 3 : \
     (sub) == SUBSAMPLING_422 ? 2 : 1)
 
-typedef enum {
-    // --- NTSC Progressive Modes (~240 active lines @ 59.94 / 60 Hz) ---
-    VIDEO_RES_NTSC_256x240P = 0,  // Low-res retro (NES, Master System)
-    VIDEO_RES_NTSC_320x240P,      // Standard retro (Atari, PS1, N64)
-    VIDEO_RES_NTSC_336x240P,      // ESP32 DMA 32-bit aligned blitter mode
-    VIDEO_RES_NTSC_512x240P,      // High-res retro (SNES high-res, Apple IIe)
-    VIDEO_RES_NTSC_640x240P,      // High-density 80-column text / terminal mode
+#define VIDEO_RES_NTSC_256x240P 0
+#define VIDEO_RES_NTSC_320x240P 1
+#define VIDEO_RES_NTSC_336x240P 2
+#define VIDEO_RES_NTSC_512x240P 3
+#define VIDEO_RES_NTSC_640x240P 4
+#define VIDEO_RES_PAL_256x288P  5
+#define VIDEO_RES_PAL_320x288P  6
+#define VIDEO_RES_PAL_352x288P  7
+#define VIDEO_RES_PAL_384x288P  8
+#define VIDEO_RES_PAL_512x288P  9
+#define VIDEO_RES_PAL_720x288P  10
+#define VIDEO_RES_COUNT         11
 
-    // --- PAL Progressive Modes (~288 active lines @ 50 Hz) ---
-    VIDEO_RES_PAL_256x288P,       // Low-res retro PAL
-    VIDEO_RES_PAL_320x288P,       // Standard retro PAL
-    VIDEO_RES_PAL_352x288P,       // VCD / Commodore 64 PAL
-    VIDEO_RES_PAL_384x288P,       // Amiga PAL progressive
-    VIDEO_RES_PAL_512x288P,       // High-res retro PAL
-    VIDEO_RES_PAL_720x288P,       // High-density progressive PAL
-
-    VIDEO_RES_COUNT
-} video_res_t;
+typedef int video_res_t;
 
 typedef struct {
     video_res_t mode;
@@ -131,56 +126,75 @@ namespace RawCompositeVideoBlitter {
 
 int _pal_ = 0;
 
-inline static DRAM_ATTR uint8_t _fb[VIDEO_BUFFER_BYTES];
-inline static uint8_t* _lines[VIDEO_LINE_COUNT];
+#define FB_CHUNK_LINES 16
+#define FB_CHUNKS ((VIDEO_LINE_COUNT + FB_CHUNK_LINES - 1) / FB_CHUNK_LINES)
+
+inline static uint8_t* _lines[VIDEO_LINE_COUNT] = {};
+inline static uint8_t* _back_lines[VIDEO_LINE_COUNT] = {};
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
-inline void set_pixel(uint16_t x, uint16_t y, Color color) {
-    //if (x >= VIDEO_LINE_WIDTH || y >= VIDEO_LINE_COUNT) return; // you wouldnt usually do this so idk man
+inline void set_pixel(uint16_t x, uint16_t y, Color color)
+{
+	uint8_t* line = _lines[y];
 
-#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-    uint16_t evenX = x & ~1;
-    size_t block_index = (y * VIDEO_LINE_WIDTH + evenX) * 2;
+	#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
 
-    // Write Y to position 0 (even) or 1 (odd)
-    _fb[block_index + (x & 1)] = color.y;
-    // Shared chroma (overwritten by the last pixel written in the pair)
-    _fb[block_index + 2] = color.u;
-    _fb[block_index + 3] = color.v;
+		uint16_t evenX = x & ~1;
+		size_t block_index = evenX * 2;
 
-#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-    // Grayscale: 1 byte per pixel
-    size_t index = y * VIDEO_LINE_WIDTH + x;
-    _fb[index] = color.y;
+		line[block_index + (x & 1)] = color.y;
+		line[block_index + 2] = color.u;
+		line[block_index + 3] = color.v;
 
-#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-    // Full color: 3 bytes per pixel
-    size_t index = (y * VIDEO_LINE_WIDTH + x) * 3;
-    _fb[index + 0] = color.y;
-    _fb[index + 1] = color.u;
-    _fb[index + 2] = color.v;
-#endif
+	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+
+		line[x] = color.y;
+
+	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+
+		size_t index = x * 3;
+
+		line[index + 0] = color.y;
+		line[index + 1] = color.u;
+		line[index + 2] = color.v;
+
+	#endif
 }
 
-void frame_clear(Color color) {
-#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-    // Process 4-byte macroblocks (2 pixels at a time)
-    for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 4) {
-        _fb[i + 0] = color.y; // Y0
-        _fb[i + 1] = color.y; // Y1
-        _fb[i + 2] = color.u; // Shared U
-        _fb[i + 3] = color.v; // Shared V
-    }
-#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-    memset(_fb, color.y, VIDEO_BUFFER_BYTES);
-#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-    for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 3) {
-        _fb[i + 0] = color.y;
-        _fb[i + 1] = color.u;
-        _fb[i + 2] = color.v;
-    }
-#endif
+void frame_clear(Color color)
+{
+	for (int y = 0; y < VIDEO_LINE_COUNT; y++) {
+
+		uint8_t* line = _lines[y];
+
+		#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+
+			for (int x = 0; x < VIDEO_LINE_WIDTH; x += 2) {
+				line[0] = color.y;
+				line[1] = color.y;
+				line[2] = color.u;
+				line[3] = color.v;
+
+				line += 4;
+			}
+
+		#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+
+			memset(line, color.y, VIDEO_LINE_WIDTH);
+
+		#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+
+			for (int x = 0; x < VIDEO_LINE_WIDTH; x++) {
+				line[0] = color.y;
+				line[1] = color.u;
+				line[2] = color.v;
+
+				line += 3;
+			}
+
+		#endif
+	}
 }
 
 /**
@@ -381,28 +395,51 @@ static void init_yuv_luts(){
         y_lut[i] = (uint16_t)(black + ((i * luma_range) / 255));
         uv_lut[i] = (int16_t)((((int32_t)i -128) * (luma_range * 25 / 100)) / 128);
     }
-}
-
-void video_init()
+}void video_init()
 {
-    video_config_t config = CURRENT_RES;
-    _pal_ = config.is_pal ? 1 : 0;
-    init_yuv_luts();
+	video_config_t config = CURRENT_RES;
+	_pal_ = config.is_pal ? 1 : 0;
+	init_yuv_luts();
 
-    #if SUPPORT_PAL
-        if (_pal_) pal_init();
-    #endif
-    #if SUPPORT_NTSC
-        if (!_pal_) ntsc_init();
-    #endif
-    
-    for (int i = 0; i < VIDEO_LINE_COUNT; i++) {
-            _lines[i] = _fb + (i * VIDEO_LINE_WIDTH * VIDEO_BPP);
-    }
-    frame_clear(Color());
+	size_t line_bytes = VIDEO_LINE_WIDTH * VIDEO_BPP;
 
-    _active_lines = config.height;
-    video_init_hw(_line_width,_samples_per_cc);    // init the hardware
+	Serial.printf("Framebuffer: %u bytes total\n", VIDEO_BUFFER_BYTES);
+	Serial.printf("Line: %u bytes\n", line_bytes);
+
+	for (int y = 0; y < VIDEO_LINE_COUNT; y++) {
+
+		_lines[y] = (uint8_t*)heap_caps_malloc(
+			line_bytes,
+			MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
+		);
+
+		if (!_lines[y]) {
+			Serial.printf(
+				"ERROR: Failed to allocate framebuffer line %d (%u bytes)\n",
+				y,
+				line_bytes
+			);
+
+			while (1) {
+				delay(1000);
+			}
+		}
+	}
+
+	#if SUPPORT_PAL
+		if (_pal_)
+			pal_init();
+	#endif
+
+	#if SUPPORT_NTSC
+		if (!_pal_)
+			ntsc_init();
+	#endif
+
+	frame_clear(Color());
+
+	_active_lines = config.height;
+	video_init_hw(_line_width, _samples_per_cc);
 }
 
 #define BEGIN_TIMING()

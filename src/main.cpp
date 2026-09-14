@@ -1,8 +1,8 @@
 //this is a test file
-#define VIDEO_RES VIDEO_RES_NTSC_256x240P
 #include <Arduino.h>
 #include <AnalogVideo.h>
 #include <CompositeGraphics.h>
+#include <WiFi.h>
 CompositeGraphics graphics;
 void test_rainbow() {
     uint16_t xres = graphics.xres;
@@ -30,6 +30,10 @@ void test_rainbow() {
 }
 
 void setup(){
+    Serial.begin(115200);
+    WiFi.mode(WIFI_OFF);
+    WiFi.disconnect(true);
+    btStop();
     RawCompositeVideoBlitter::video_init();
     graphics.init();
 }

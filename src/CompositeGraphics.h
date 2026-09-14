@@ -8,7 +8,6 @@ class CompositeGraphics
 public:
     int xres = VIDEO_LINE_WIDTH;
     int yres = VIDEO_LINE_COUNT;
-    uint8_t* backbuffer = nullptr;
     
     int cursorX, cursorY, cursorBaseX;
     Color frontColor;
@@ -24,7 +23,6 @@ public:
     CompositeGraphics(int w = VIDEO_LINE_WIDTH, int h = VIDEO_LINE_COUNT, int initialTriangleBufferSize = 0)
         : xres(w), yres(h)
     {
-        backbuffer = RawCompositeVideoBlitter::_fb;
         font = nullptr;
         cursorX = cursorY = cursorBaseX = 0;
         trinagleBufferSize = initialTriangleBufferSize;
@@ -105,46 +103,40 @@ public:
     }
 
     inline void begin(Color clearColor = Color{0, 128, 128})
-    {
-        // Clear backbuffer using subsampling-aware fill
-        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-            for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 4) {
-                backbuffer[i + 0] = clearColor.y;
-                backbuffer[i + 1] = clearColor.y;
-                backbuffer[i + 2] = clearColor.u;
-                backbuffer[i + 3] = clearColor.v;
-            }
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-            memset(backbuffer, clearColor.y, VIDEO_BUFFER_BYTES);
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-            for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 3) {
-                backbuffer[i + 0] = clearColor.y;
-                backbuffer[i + 1] = clearColor.u;
-                backbuffer[i + 2] = clearColor.v;
-            }
-        #endif
+{
+	RawCompositeVideoBlitter::frame_clear(clearColor);
 
-        triangleCount = 0;
-        triangleRoot = nullptr;
-    }
+	triangleCount = 0;
+	triangleRoot = nullptr;
+}
 
     inline void dotFast(int x, int y, Color color)
-    {
-        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-            uint16_t evenX = x & ~1;
-            size_t block_index = (y * xres + evenX) * 2;
-            backbuffer[block_index + (x & 1)] = color.y;
-            backbuffer[block_index + 2] = color.u;
-            backbuffer[block_index + 3] = color.v;
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-            backbuffer[y * xres + x] = color.y;
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-            size_t index = (y * xres + x) * 3;
-            backbuffer[index + 0] = color.y;
-            backbuffer[index + 1] = color.u;
-            backbuffer[index + 2] = color.v;
-        #endif
-    }
+{
+	uint8_t* line = RawCompositeVideoBlitter::_lines[y];
+
+	#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+
+		uint16_t evenX = x & ~1;
+		size_t block_index = evenX * 2;
+
+		line[block_index + (x & 1)] = color.y;
+		line[block_index + 2] = color.u;
+		line[block_index + 3] = color.v;
+
+	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+
+		line[x] = color.y;
+
+	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+
+		size_t index = x * 3;
+
+		line[index + 0] = color.y;
+		line[index + 1] = color.u;
+		line[index + 2] = color.v;
+
+	#endif
+}
 
     inline void dot(int x, int y, Color color)
     {
