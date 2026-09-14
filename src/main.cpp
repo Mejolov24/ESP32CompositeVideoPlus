@@ -5,9 +5,11 @@
 #include <AnalogVideo.h>
 #include <CompositeGraphics.h>
 #include "esp_pm.h"
+#include <AudioPWM.h>
 
 #include "font6x8.h"
 Font<CompositeGraphics> font(6, 8, font6x8::pixels);
+AudioPWM audio;
 
 CompositeGraphics graphics;
 void test_rainbow()
@@ -34,6 +36,9 @@ void test_rainbow()
     }
 }
 
+
+float phase = 0.0;
+
 void setup(){
 
     esp_pm_lock_handle_t powerManagementLock;
@@ -44,6 +49,9 @@ void setup(){
     graphics.setFont(font);
     graphics.setTextColor(Color::fromRGB(255,255,255));
     graphics.setCursor(graphics.xres / 2, graphics.yres / 2);
+    audio.begin(26, 8000, 0, 100000);
+    // i dont recommend pin 26 since its next to the video pin and generates noise
+    // but i do it since i already soldered it ;-;
 
 	test_rainbow();
     graphics.print("Mejolov24");
@@ -53,5 +61,18 @@ void loop()
 {
     //RawCompositeVideoBlitter::wait_for_vblank();
 	//graphics.clear();
+    while (audio.available() < 1024) {
+    int16_t sine_chunk[512];
 
+    for (int i = 0; i < 512; i++) {
+        sine_chunk[i] = (int16_t)(32767.0f * sinf(phase));
+        phase += 2.0f * M_PI * 440 / 8000;
+        
+        if (phase >= 2.0f * M_PI) {
+            phase -= 2.0f * M_PI;
+        }
+    }
+
+    audio.fill_buffer(sine_chunk, 512);
+    }
 }
