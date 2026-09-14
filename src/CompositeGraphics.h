@@ -1,338 +1,267 @@
 #pragma once
-#include "Color.h"
+#include "AnalogVideo.h"
 #include "Font.h"
 #include "TriangleTree.h"
 
 class CompositeGraphics
 { 
-  public:
-  int xres;
-  int yres;
-  char **frame;
-  char **backbuffer;
-  char **zbuffer;
-  int cursorX, cursorY, cursorBaseX;
-  int frontColor, backColor;
-  Font<CompositeGraphics> *font;
-  
-  TriangleTree<CompositeGraphics> *triangleBuffer;
-  TriangleTree<CompositeGraphics> *triangleRoot;
-  int trinagleBufferSize;
-  int triangleCount;
-
-  inline void setHue(char hue) {Color::setHue(hue);}
-
-  CompositeGraphics(int w, int h, int initialTrinagleBufferSize = 0)
-    :xres(w), 
-    yres(h)
-  {
-    font = 0;
-    cursorX = cursorY = cursorBaseX = 0;
-    trinagleBufferSize = initialTrinagleBufferSize;
-    triangleCount = 0;
-    frontColor = 50;
-    backColor = -1;
-  }
-
-  void setTextColor(int front, int back = -1)
-  {
-    //-1 = transparent back;
-    frontColor = front;
-    backColor = back;
-  }
-  
-  void init()
-  {
-    frame = (char**)malloc(yres * sizeof(char*));
-    backbuffer = (char**)malloc(yres * sizeof(char*));
-    //not enough memory for z-buffer implementation
-    //zbuffer = (char**)malloc(yres * sizeof(char*));
-    for(int y = 0; y < yres; y++)
-    {
-      frame[y] = (char*)malloc(xres);
-      backbuffer[y] = (char*)malloc(xres);
-      //zbuffer[y] = (char*)malloc(xres);
-    }
-    triangleBuffer = (TriangleTree<CompositeGraphics>*)malloc(sizeof(TriangleTree<CompositeGraphics>) * trinagleBufferSize);
-  }
-
-  void setFont(Font<CompositeGraphics> &font)
-  {
-    this->font = &font;
-  }
-  
-  void setCursor(int x, int y)
-  {
-    cursorX = cursorBaseX = x;  
-    cursorY = y;  
-  }
-  
-  void print(const char *str)
-  {
-    if(!font) return;
-    while(*str)
-    {
-      if(*str >= 32 && *str < 128)
-        font->drawChar(*this, cursorX, cursorY, *str, frontColor, backColor);
-      cursorX += font->xres;
-      if(cursorX + font->xres > xres || *str == '\n')
-      {
-        cursorX = cursorBaseX;
-        cursorY += font->yres;        
-      }
-      str++;
-    }
-  }
-  
-  void print(int number, int base = 10, int minCharacters = 1)
-  {
-    bool sign = number < 0;
-    if(sign) number = -number;
-    const char baseChars[] = "0123456789ABCDEF";
-    char temp[33];
-    temp[32] = 0;
-    int i = 31;
-    do
-    {
-      temp[i--] = baseChars[number % base];
-      number /= base;
-    }while(number > 0);
-    if(sign)
-      temp[i--] = '-';
-    for(;i > 31 - minCharacters; i--)
-      temp[i] = ' ';
-    print(&temp[i + 1]);
-  }
-
-  inline void begin(int clear = -1, bool clearZ = true)
-  {
-    if(clear > -1)
-      for(int y = 0; y < yres; y++)
-        for(int x = 0; x < xres; x++)
-          backbuffer[y][x] = Color(clear);
-    triangleCount = 0;
-    triangleRoot = 0;
-  }
-
-  inline void dotFast(int x, int y, Color color)
-  {
-    backbuffer[y][x] = color;
-  }
-  
-  inline void dot(int x, int y, Color color)
-  {
-    if((unsigned int)x < xres && (unsigned int)y < yres)
-      backbuffer[y][x] = color;
-  }
-  
-  inline void dotAdd(int x, int y, Color color)
-  {
-    if((unsigned int)x < xres && (unsigned int)y < yres)
-      backbuffer[y][x] = color + backbuffer[y][x];
-  }
-  
-  inline char get(int x, int y)
-  {
-    if((unsigned int)x < xres && (unsigned int)y < yres)
-      return backbuffer[y][x];
-    return 0;
-  }
+public:
+    int xres = VIDEO_LINE_WIDTH;
+    int yres = VIDEO_LINE_COUNT;
+    uint8_t* backbuffer = nullptr;
     
-  inline void xLine(int x0, int x1, int y, Color color)
-  {
-    if(x0 > x1)
-    {
-      int xb = x0;
-      x0 = x1;
-      x1 = xb;
-    }
-    if(x0 < 0) x0 = 0;
-    if(x1 > xres) x1 = xres;
-    for(int x = x0; x < x1; x++)
-      dotFast(x, y, color);
-  }
+    int cursorX, cursorY, cursorBaseX;
+    Color frontColor;
+    Color backColor;
+    bool hasBackColor;
+    
+    Font<CompositeGraphics> *font;
+    TriangleTree<CompositeGraphics> *triangleBuffer;
+    TriangleTree<CompositeGraphics> *triangleRoot;
+    int trinagleBufferSize;
+    int triangleCount;
 
-  void enqueueTriangle(short *v0, short *v1, short *v2, Color color)
-  {
-    if(triangleCount >= trinagleBufferSize) return;
-    TriangleTree<CompositeGraphics> &t = triangleBuffer[triangleCount++];
-    t.set(v0, v1, v2, color);
-    if(triangleRoot)
-      triangleRoot->add(&triangleRoot, t);
-    else
-      triangleRoot = &t;
-  }
+    CompositeGraphics(int w = VIDEO_LINE_WIDTH, int h = VIDEO_LINE_COUNT, int initialTriangleBufferSize = 0)
+        : xres(w), yres(h)
+    {
+        backbuffer = RawCompositeVideoBlitter::_fb;
+        font = nullptr;
+        cursorX = cursorY = cursorBaseX = 0;
+        trinagleBufferSize = initialTriangleBufferSize;
+        triangleCount = 0;
+        frontColor = Color{255, 128, 128}; // White default
+        backColor = Color{0, 128, 128};    // Black default
+        hasBackColor = false;
+    }
 
-  void triangle(short *v0, short *v1, short *v2, Color color)
-  {
-    short *v[3] = {v0, v1, v2};
-    if(v[1][1] < v[0][1])
-    {
-      short *vb = v[0]; v[0] = v[1]; v[1] = vb;
+    ~CompositeGraphics() {
+        if (triangleBuffer) free(triangleBuffer);
     }
-    if(v[2][1] < v[1][1])
-    {
-      short *vb = v[1]; v[1] = v[2]; v[2] = vb;
-    }
-    if(v[1][1] < v[0][1])
-    {
-      short *vb = v[0]; v[0] = v[1]; v[1] = vb;
-    }
-    int y = v[0][1];
-    int xac = v[0][0] << 16;
-    int xab = v[0][0] << 16;
-    int xbc = v[1][0] << 16;
-    int xaci = 0;
-    int xabi = 0;
-    int xbci = 0;
-    if(v[1][1] != v[0][1])
-      xabi = ((v[1][0] - v[0][0]) << 16) / (v[1][1] - v[0][1]);
-    if(v[2][1] != v[0][1])
-      xaci = ((v[2][0] - v[0][0]) << 16) / (v[2][1] - v[0][1]);
-    if(v[2][1] != v[1][1])
-      xbci = ((v[2][0] - v[1][0]) << 16) / (v[2][1] - v[1][1]);
 
-    for(; y < v[1][1] && y < yres; y++)
+    void setTextColor(Color front, Color back = Color{0, 0, 0})
     {
-      if(y >= 0)
-        xLine(xab >> 16, xac >> 16, y, color);
-      xab += xabi;
-      xac += xaci;
+        frontColor = front;
+        backColor = back;
+        hasBackColor = (back.y != 0 || back.u != 0 || back.v != 0);
     }
-    for(; y < v[2][1] && y < yres; y++)
+
+    void init()
     {
-      if(y >= 0)
-        xLine(xbc >> 16, xac >> 16, y, color);
-      xbc += xbci;
-      xac += xaci;
-    }
-  }
-  
-  void line(int x1, int y1, int x2, int y2, Color color)
-  {
-    int x, y, xe, ye;
-    int dx = x2 - x1;
-    int dy = y2 - y1;
-    int dx1 = labs(dx);
-    int dy1 = labs(dy);
-    int px = 2 * dy1 - dx1;
-    int py = 2 * dx1 - dy1;
-    if(dy1 <= dx1)
-    {
-      if(dx >= 0)
-      {
-        x = x1;
-        y = y1;
-        xe = x2;
-      }
-      else
-      {
-        x = x2;
-        y = y2;
-        xe = x1;
-      }
-      dot(x, y, color);
-      for(int i = 0; x < xe; i++)
-      {
-        x = x + 1;
-        if(px < 0)
-        {
-          px = px + 2 * dy1;
+        xres = VIDEO_LINE_WIDTH;
+        yres = VIDEO_LINE_COUNT;
+
+        // Allocate single flat backbuffer matching DMA buffer size
+
+        if (trinagleBufferSize > 0) {
+            triangleBuffer = (TriangleTree<CompositeGraphics>*)malloc(sizeof(TriangleTree<CompositeGraphics>) * trinagleBufferSize);
         }
+    }
+
+    void setFont(Font<CompositeGraphics> &font)
+    {
+        this->font = &font;
+    }
+
+    void setCursor(int x, int y)
+    {
+        cursorX = cursorBaseX = x;  
+        cursorY = y;  
+    }
+
+    void print(bool transparent_bg, const char *str)
+    {
+        if (!font) return;
+        while (*str)
+        {
+            if (*str >= 32 && *str < 128)
+                font->drawChar(*this, cursorX, cursorY, *str, frontColor, backColor, transparent_bg);
+            cursorX += font->xres;
+            if (cursorX + font->xres > xres || *str == '\n')
+            {
+                cursorX = cursorBaseX;
+                cursorY += font->yres;        
+            }
+            str++;
+        }
+    }
+
+    void print(bool transparent_bg, int number, int base = 10, int minCharacters = 1)
+    {
+        bool sign = number < 0;
+        if (sign) number = -number;
+        const char baseChars[] = "0123456789ABCDEF";
+        char temp[33];
+        temp[32] = 0;
+        int i = 31;
+        do
+        {
+            temp[i--] = baseChars[number % base];
+            number /= base;
+        } while (number > 0);
+
+        if (sign) temp[i--] = '-';
+        for (; i > 31 - minCharacters; i--) temp[i] = ' ';
+        print(&temp[i + 1],transparent_bg);
+    }
+
+    inline void begin(Color clearColor = Color{0, 128, 128})
+    {
+        // Clear backbuffer using subsampling-aware fill
+        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+            for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 4) {
+                backbuffer[i + 0] = clearColor.y;
+                backbuffer[i + 1] = clearColor.y;
+                backbuffer[i + 2] = clearColor.u;
+                backbuffer[i + 3] = clearColor.v;
+            }
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+            memset(backbuffer, clearColor.y, VIDEO_BUFFER_BYTES);
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+            for (size_t i = 0; i < VIDEO_BUFFER_BYTES; i += 3) {
+                backbuffer[i + 0] = clearColor.y;
+                backbuffer[i + 1] = clearColor.u;
+                backbuffer[i + 2] = clearColor.v;
+            }
+        #endif
+
+        triangleCount = 0;
+        triangleRoot = nullptr;
+    }
+
+    inline void dotFast(int x, int y, Color color)
+    {
+        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+            uint16_t evenX = x & ~1;
+            size_t block_index = (y * xres + evenX) * 2;
+            backbuffer[block_index + (x & 1)] = color.y;
+            backbuffer[block_index + 2] = color.u;
+            backbuffer[block_index + 3] = color.v;
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+            backbuffer[y * xres + x] = color.y;
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+            size_t index = (y * xres + x) * 3;
+            backbuffer[index + 0] = color.y;
+            backbuffer[index + 1] = color.u;
+            backbuffer[index + 2] = color.v;
+        #endif
+    }
+
+    inline void dot(int x, int y, Color color)
+    {
+        if ((unsigned int)x < (unsigned int)xres && (unsigned int)y < (unsigned int)yres)
+            dotFast(x, y, color);
+    }
+
+    inline void xLine(int x0, int x1, int y, Color color)
+    {
+        if (x0 > x1) { int xb = x0; x0 = x1; x1 = xb; }
+        if (x0 < 0) x0 = 0;
+        if (x1 > xres) x1 = xres;
+        for (int x = x0; x < x1; x++)
+            dotFast(x, y, color);
+    }
+
+    void enqueueTriangle(short *v0, short *v1, short *v2, Color color)
+    {
+        if (triangleCount >= trinagleBufferSize) return;
+        TriangleTree<CompositeGraphics> &t = triangleBuffer[triangleCount++];
+        t.set(v0, v1, v2, color);
+        if (triangleRoot)
+            triangleRoot->add(&triangleRoot, t);
         else
-        {
-          if((dx < 0 && dy < 0) || (dx > 0 && dy > 0))
-          {
-            y = y + 1;
-          }
-          else
-          {
-            y = y - 1;
-          }
-          px = px + 2 *(dy1 - dx1);
-        }
-        dot(x, y, color);
-      }
+            triangleRoot = &t;
     }
-    else
-    {
-      if(dy >= 0)
-      {
-        x = x1;
-        y = y1;
-        ye = y2;
-      }
-      else
-      {
-        x = x2;
-        y = y2;
-        ye = y1;
-      }
-      dot(x, y, color);
-      for(int i = 0; y < ye; i++)
-      {
-        y = y + 1;
-        if(py <= 0)
-        {
-          py = py + 2 * dx1;
-        }
-        else
-        {
-          if((dx < 0 && dy < 0) || (dx > 0 && dy > 0))
-          {
-            x = x + 1;
-          }
-          else
-          {
-            x = x - 1;
-          }
-          py = py + 2 * (dx1 - dy1);
-        }
-        dot(x, y, color);
-      }
-    }
-  }
-  
-  inline void flush()
-  {
-    if(triangleRoot)
-      triangleRoot->draw(*this);
-  }
 
-  inline void end()
-  {
-    char **b = backbuffer;
-    backbuffer = frame;
-    frame = b;    
-  }
-
-  void fillRect(int x, int y, int w, int h, Color color)
-  {
-    if(x < 0)
+    void triangle(short *v0, short *v1, short *v2, Color color)
     {
-      w += x;
-      x = 0;
-    }
-    if(y < 0)
-    {
-      h += y;
-      y = 0;
-    }
-    if(x + w > xres)
-      w = xres - x;
-    if(y + h > yres)
-      h = yres - y;
-    for(int j = y; j < y + h; j++)
-      for(int i = x; i < x + w; i++)
-        dotFast(i, j, color);
-  }
+        short *v[3] = {v0, v1, v2};
+        if (v[1][1] < v[0][1]) { short *vb = v[0]; v[0] = v[1]; v[1] = vb; }
+        if (v[2][1] < v[1][1]) { short *vb = v[1]; v[1] = v[2]; v[2] = vb; }
+        if (v[1][1] < v[0][1]) { short *vb = v[0]; v[0] = v[1]; v[1] = vb; }
 
-  void rect(int x, int y, int w, int h, Color color)
-  {
-    fillRect(x, y, w, 1, color);
-    fillRect(x, y, 1, h, color);
-    fillRect(x, y + h - 1, w, 1, color);
-    fillRect(x + w - 1, y, 1, h, color);
-  }
+        int y = v[0][1];
+        int xac = v[0][0] << 16;
+        int xab = v[0][0] << 16;
+        int xbc = v[1][0] << 16;
+        int xaci = 0, xabi = 0, xbci = 0;
+
+        if (v[1][1] != v[0][1]) xabi = ((v[1][0] - v[0][0]) << 16) / (v[1][1] - v[0][1]);
+        if (v[2][1] != v[0][1]) xaci = ((v[2][0] - v[0][0]) << 16) / (v[2][1] - v[0][1]);
+        if (v[2][1] != v[1][1]) xbci = ((v[2][0] - v[1][0]) << 16) / (v[2][1] - v[1][1]);
+
+        for (; y < v[1][1] && y < yres; y++) {
+            if (y >= 0) xLine(xab >> 16, xac >> 16, y, color);
+            xab += xabi;
+            xac += xaci;
+        }
+        for (; y < v[2][1] && y < yres; y++) {
+            if (y >= 0) xLine(xbc >> 16, xac >> 16, y, color);
+            xbc += xbci;
+            xac += xaci;
+        }
+    }
+
+    void line(int x1, int y1, int x2, int y2, Color color)
+    {
+        int x, y, xe, ye;
+        int dx = x2 - x1, dy = y2 - y1;
+        int dx1 = labs(dx), dy1 = labs(dy);
+        int px = 2 * dy1 - dx1, py = 2 * dx1 - dy1;
+
+        if (dy1 <= dx1) {
+            if (dx >= 0) { x = x1; y = y1; xe = x2; }
+            else         { x = x2; y = y2; xe = x1; }
+            dot(x, y, color);
+            for (int i = 0; x < xe; i++) {
+                x++;
+                if (px < 0) px += 2 * dy1;
+                else {
+                    if ((dx < 0 && dy < 0) || (dx > 0 && dy > 0)) y++;
+                    else y--;
+                    px += 2 * (dy1 - dx1);
+                }
+                dot(x, y, color);
+            }
+        } else {
+            if (dy >= 0) { x = x1; y = y1; ye = y2; }
+            else         { x = x2; y = y2; ye = x1; }
+            dot(x, y, color);
+            for (int i = 0; y < ye; i++) {
+                y++;
+                if (py <= 0) py += 2 * dx1;
+                else {
+                    if ((dx < 0 && dy < 0) || (dx > 0 && dy > 0)) x++;
+                    else x--;
+                    py += 2 * (dx1 - dy1);
+                }
+                dot(x, y, color);
+            }
+        }
+    }
+
+    inline void flush()
+    {
+        if (triangleRoot)
+            triangleRoot->draw(*this);
+    }
+
+    void fillRect(int x, int y, int w, int h, Color color)
+    {
+        if (x < 0) { w += x; x = 0; }
+        if (y < 0) { h += y; y = 0; }
+        if (x + w > xres) w = xres - x;
+        if (y + h > yres) h = yres - y;
+
+        for (int j = y; j < y + h; j++)
+            for (int i = x; i < x + w; i++)
+                dotFast(i, j, color);
+    }
+
+    void rect(int x, int y, int w, int h, Color color)
+    {
+        fillRect(x, y, w, 1, color);
+        fillRect(x, y, 1, h, color);
+        fillRect(x, y + h - 1, w, 1, color);
+        fillRect(x + w - 1, y, 1, h, color);
+    }
 };
-

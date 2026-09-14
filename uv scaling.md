@@ -10,7 +10,7 @@ So x = 3 -> x = 2
 So x = 4 -> x = 4
 So x = 5 -> x = 4
 
-Block index
+## Block index
 = (evenX + sizeX * Y) * 2
 That maps (x,y) to the one dimentional array
 In steps of 4 bytes

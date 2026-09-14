@@ -92,7 +92,7 @@ typedef struct {
     uint16_t total_scanlines; // 262 for NTSC, 312 for PAL
 } video_config_t;
 
-static const video_config_t VIDEO_CONFIGS[VIDEO_RES_COUNT] = {
+constexpr video_config_t VIDEO_CONFIGS[VIDEO_RES_COUNT] = {
     // NTSC 240p Modes (262 total scanlines)
     [VIDEO_RES_NTSC_256x240P] = { VIDEO_RES_NTSC_256x240P, 256, 240, 59.94f, false, 262 },
     [VIDEO_RES_NTSC_320x240P] = { VIDEO_RES_NTSC_320x240P, 320, 240, 59.94f, false, 262 },
@@ -129,17 +129,15 @@ static const video_config_t VIDEO_CONFIGS[VIDEO_RES_COUNT] = {
 
 namespace RawCompositeVideoBlitter {
 
-enum VideoStandard {NTSC, PAL};
-
 int _pal_ = 0;
 
-DRAM_ATTR uint8_t _fb[VIDEO_BUFFER_BYTES];
-uint8_t* _lines[VIDEO_LINE_COUNT];
+inline static DRAM_ATTR uint8_t _fb[VIDEO_BUFFER_BYTES];
+inline static uint8_t* _lines[VIDEO_LINE_COUNT];
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
 inline void set_pixel(uint16_t x, uint16_t y, Color color) {
-    if (x >= VIDEO_LINE_WIDTH || y >= VIDEO_LINE_COUNT) return;
+    //if (x >= VIDEO_LINE_WIDTH || y >= VIDEO_LINE_COUNT) return; // you wouldnt usually do this so idk man
 
 #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
     uint16_t evenX = x & ~1;
@@ -375,10 +373,22 @@ inline uint16_t IRAM_ATTR clamp_dac(int32_t val) {
     return (uint16_t)val;
 }
 
-void video_init(VideoStandard standard)
+static void init_yuv_luts(){
+    uint32_t black = BLACK_LEVEL;
+    uint32_t white = WHITE_LEVEL;
+    int32_t luma_range = (uint32_t)white - (uint32_t)black;
+    for(int i = 0; i < 256; i++){
+        y_lut[i] = (uint16_t)(black + ((i * luma_range) / 255));
+        uv_lut[i] = (int16_t)((((int32_t)i -128) * (luma_range * 25 / 100)) / 128);
+    }
+}
+
+void video_init()
 {
-    _pal_ = standard == PAL;
-    
+    video_config_t config = CURRENT_RES;
+    _pal_ = config.is_pal ? 1 : 0;
+    init_yuv_luts();
+
     #if SUPPORT_PAL
         if (_pal_) pal_init();
     #endif
@@ -386,19 +396,15 @@ void video_init(VideoStandard standard)
         if (!_pal_) ntsc_init();
     #endif
     
-    _active_lines = 240;
+    for (int i = 0; i < VIDEO_LINE_COUNT; i++) {
+            _lines[i] = _fb + (i * VIDEO_LINE_WIDTH * VIDEO_BPP);
+    }
+    frame_clear(Color());
+
+    _active_lines = config.height;
     video_init_hw(_line_width,_samples_per_cc);    // init the hardware
 }
 
-static void init_yuv_luts(){
-    uint32_t black = BLACK_LEVEL;
-    uint32_t white = WHITE_LEVEL;
-    int32_t luma_range = (uint32_t)white - (uint32_t)black;
-    for(int i = 0; i < 256; i++){
-        y_lut[i] = (uint16_t)(black + ((i + luma_range) / 255));
-        uv_lut[i] = (int16_t)((((int32_t)i -128) * (luma_range * 25 / 100)) / 128);
-    }
-}
 #define BEGIN_TIMING()
 #define END_TIMING()
 #define ISR_BEGIN()
@@ -436,6 +442,8 @@ void perf(){};
 
     void IRAM_ATTR blit_pal(uint8_t* src, uint16_t* dst)
     {
+        // i wont use pal by now
+        /*
         const bool even = _line_counter & 1;
         const uint32_t* p = even ? _palette : _palette + 256;
         uint32_t c,color;
@@ -511,6 +519,7 @@ void perf(){};
             dst[19^1] = P3;
             dst += 20;
         }
+    */
     }
 
     void IRAM_ATTR burst_pal(uint16_t* line)
@@ -557,7 +566,6 @@ void perf(){};
 
 #if SUPPORT_NTSC
     void ntsc_init() {
-        _palette = ntsc_palette();
         _sample_rate = 315.0/88 * _samples_per_cc;   // DAC rate
         _line_width = NTSC_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
         _line_count = NTSC_LINES;
@@ -569,25 +577,54 @@ void perf(){};
     // draw a line of game in NTSC
     void IRAM_ATTR blit_ntsc(uint8_t* src, uint16_t* dst)
     {
-        uint32_t* d = (uint32_t*)dst;
-        const uint32_t* p = _palette;
-        uint32_t c;
-        int i;
+        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
+            uint8_t y0 = src[0];
+            uint8_t y1 = src[1];
+            uint8_t u = src[2];
+            uint8_t v = src[3];
+            int16_t u_val = uv_lut[u];
+            int16_t v_val = uv_lut[v];
+            dst[0^1] = clamp_dac(y_lut[y0] + u_val);
+            dst[1^1] = clamp_dac(y_lut[y0] + v_val);
+            dst[2^1] = clamp_dac(y_lut[y1] - u_val);
+            dst[3^1] = clamp_dac(y_lut[y1] - v_val);
 
-        // 2 pixels per color clock, 4 samples per cc, used by atari
-        // AA AA
-        // 192 color clocks wide
-        // only show 336 pixels
-        d += 16;
-        for (i = 0; i < 336; i += 4) {
-            uint32_t c = *((uint32_t*)src); // screen may be in 32 bit mem
-            d[0] = p[(uint8_t)c];
-            d[1] = p[(uint8_t)(c>>8)] << 8;
-            d[2] = p[(uint8_t)(c>>16)];
-            d[3] = p[(uint8_t)(c>>24)] << 8;
-            d += 4;
+            dst += 4;
             src += 4;
         }
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
+        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
+            uint8_t y0 = src[0];
+            uint8_t u0 = src[1];
+            uint8_t v0 = src[2];
+
+            uint8_t y1 = src[3];
+            uint8_t u1 = src[4];
+            uint8_t v1 = src[5];
+
+            dst[0^1] = clamp_dac(y_lut[y0] + uv_lut[u0]);
+            dst[1^1] = clamp_dac(y_lut[y0] + uv_lut[v0]);
+            dst[2^1] = clamp_dac(y_lut[y1] - uv_lut[u0]);
+            dst[3^1] = clamp_dac(y_lut[y1] - uv_lut[v1]);
+
+            dst += 4;
+            src += 6;
+        }
+        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
+            uint16_t ly0 = y_lut[src[0]];
+            uint16_t ly1 = y_lut[src[1]];
+
+            dst[0^1] = ly0;
+            dst[1^1] = ly0;
+            dst[2^1] = ly1;
+            dst[3^1] = ly1;
+
+            dst += 4;
+            src += 2;
+        }
+        #endif
         END_TIMING();
     }
     
