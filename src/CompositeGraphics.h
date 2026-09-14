@@ -66,7 +66,7 @@ public:
         cursorY = y;  
     }
 
-    void print(bool transparent_bg, const char *str)
+    void print(const char *str, bool transparent_bg = true)
     {
         if (!font) return;
         while (*str)
@@ -83,7 +83,7 @@ public:
         }
     }
 
-    void print(bool transparent_bg, int number, int base = 10, int minCharacters = 1)
+    void print(int number, int base = 10, int minCharacters = 1,bool transparent_bg = true)
     {
         bool sign = number < 0;
         if (sign) number = -number;

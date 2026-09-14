@@ -1,10 +1,13 @@
 //this is a test file
 #define VIDEO_RES VIDEO_RES_NTSC_336x240P
-#define VIDEO_SUBSAMPLING SUBSAMPLING_422
+#define VIDEO_SUBSAMPLING SUBSAMPLING_444
 #include <Arduino.h>
 #include <AnalogVideo.h>
 #include <CompositeGraphics.h>
 #include "esp_pm.h"
+
+#include "font6x8.h"
+Font<CompositeGraphics> font(6, 8, font6x8::pixels);
 
 CompositeGraphics graphics;
 void test_rainbow()
@@ -38,12 +41,17 @@ void setup(){
     esp_pm_lock_acquire(powerManagementLock);
     RawCompositeVideoBlitter::video_init();
     graphics.init();
+    graphics.setFont(font);
+    graphics.setTextColor(Color::fromRGB(255,255,255));
+    graphics.setCursor(graphics.xres / 2, graphics.yres / 2);
+
+	test_rainbow();
+    graphics.print("Mejolov24");
 }
 
 void loop()
 {
-    RawCompositeVideoBlitter::wait_for_vblank();
+    //RawCompositeVideoBlitter::wait_for_vblank();
 	//graphics.clear();
-	test_rainbow();
 
 }
