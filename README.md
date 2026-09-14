@@ -1,7 +1,7 @@
 # ESP32CompositeVideoPlus
 ESP32 EIA RS-170A Analog video library
 
-![Thumbnail](https://raw.githubusercontent.com/Mejolov24/https://github.com/Mejolov24/ESP32CompositeVideoPlus/refs/heads/main/thumbnail.png)
+![Thumbnail](https://github.com/Mejolov24/ESP32CompositeVideoPlus/blob/master/thumbnail.png?raw=true)
 
 This repository is a fork of Marciot's [ESP32CompositeVideoColor](https://github.com/marciot/ESP32CompositeColorVideo) that adds YUV color scheme, chroma subsampling and more color range (~16,777,216 Colors)
 
