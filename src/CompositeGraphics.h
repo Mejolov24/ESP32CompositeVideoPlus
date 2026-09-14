@@ -102,7 +102,7 @@ public:
         print(&temp[i + 1],transparent_bg);
     }
 
-    inline void begin(Color clearColor = Color{0, 128, 128})
+    inline void clear(Color clearColor = Color{0, 128, 128})
 {
 	RawCompositeVideoBlitter::frame_clear(clearColor);
 

@@ -66,15 +66,11 @@ typedef int subsampling_t;
 #define VIDEO_RES_NTSC_256x240P 0
 #define VIDEO_RES_NTSC_320x240P 1
 #define VIDEO_RES_NTSC_336x240P 2
-#define VIDEO_RES_NTSC_512x240P 3
-#define VIDEO_RES_NTSC_640x240P 4
-#define VIDEO_RES_PAL_256x288P  5
-#define VIDEO_RES_PAL_320x288P  6
-#define VIDEO_RES_PAL_352x288P  7
-#define VIDEO_RES_PAL_384x288P  8
-#define VIDEO_RES_PAL_512x288P  9
-#define VIDEO_RES_PAL_720x288P  10
-#define VIDEO_RES_COUNT         11
+#define VIDEO_RES_PAL_256x288P  3
+#define VIDEO_RES_PAL_320x288P  4
+#define VIDEO_RES_PAL_352x288P  5
+#define VIDEO_RES_PAL_384x288P  6
+#define VIDEO_RES_COUNT         7
 
 typedef int video_res_t;
 
@@ -92,16 +88,12 @@ constexpr video_config_t VIDEO_CONFIGS[VIDEO_RES_COUNT] = {
     [VIDEO_RES_NTSC_256x240P] = { VIDEO_RES_NTSC_256x240P, 256, 240, 59.94f, false, 262 },
     [VIDEO_RES_NTSC_320x240P] = { VIDEO_RES_NTSC_320x240P, 320, 240, 59.94f, false, 262 },
     [VIDEO_RES_NTSC_336x240P] = { VIDEO_RES_NTSC_336x240P, 336, 240, 59.94f, false, 262 },
-    [VIDEO_RES_NTSC_512x240P] = { VIDEO_RES_NTSC_512x240P, 512, 240, 59.94f, false, 262 },
-    [VIDEO_RES_NTSC_640x240P] = { VIDEO_RES_NTSC_640x240P, 640, 240, 59.94f, false, 262 },
-
     // PAL 288p Modes (312 total scanlines)
     [VIDEO_RES_PAL_256x288P]  = { VIDEO_RES_PAL_256x288P,  256, 288, 50.00f, true,  312 },
     [VIDEO_RES_PAL_320x288P]  = { VIDEO_RES_PAL_320x288P,  320, 288, 50.00f, true,  312 },
     [VIDEO_RES_PAL_352x288P]  = { VIDEO_RES_PAL_352x288P,  352, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_384x288P]  = { VIDEO_RES_PAL_384x288P,  384, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_512x288P]  = { VIDEO_RES_PAL_512x288P,  512, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_720x288P]  = { VIDEO_RES_PAL_720x288P,  720, 288, 50.00f, true,  312 },
+    [VIDEO_RES_PAL_384x288P]  = { VIDEO_RES_PAL_384x288P,  384, 288, 50.00f, true,  312 }
+
 };
 
 #ifndef VIDEO_PIN
@@ -130,7 +122,7 @@ int _pal_ = 0;
 #define FB_CHUNKS ((VIDEO_LINE_COUNT + FB_CHUNK_LINES - 1) / FB_CHUNK_LINES)
 
 inline static uint8_t* _lines[VIDEO_LINE_COUNT] = {};
-inline static uint8_t* _back_lines[VIDEO_LINE_COUNT] = {};
+
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
@@ -640,10 +632,15 @@ void perf(){};
             uint8_t u1 = src[4];
             uint8_t v1 = src[5];
 
-            dst[0^1] = clamp_dac(y_lut[y0] + uv_lut[u0]);
-            dst[1^1] = clamp_dac(y_lut[y0] + uv_lut[v0]);
-            dst[2^1] = clamp_dac(y_lut[y1] - uv_lut[u0]);
-            dst[3^1] = clamp_dac(y_lut[y1] - uv_lut[v1]);
+            // Average or select a stable chroma vector for the color clock pair 
+            // to preserve subcarrier phase integrity while keeping luma independent
+            int16_t u_val = uv_lut[(u0 + u1) / 2];
+            int16_t v_val = uv_lut[(v0 + v1) / 2];
+
+            dst[0^1] = clamp_dac(y_lut[y0] + u_val);
+            dst[1^1] = clamp_dac(y_lut[y0] + v_val);
+            dst[2^1] = clamp_dac(y_lut[y1] - u_val);
+            dst[3^1] = clamp_dac(y_lut[y1] - v_val);
 
             dst += 4;
             src += 6;
@@ -756,6 +753,17 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
       }
       vTaskDelay(n+1);
     }
+#endif
+
+#ifdef ESP_PLATFORM
+void wait_for_vblank()
+{
+	while (_line_counter < _active_lines)
+		taskYIELD();
+
+	while (_line_counter >= _active_lines)
+		taskYIELD();
+}
 #endif
 
 // Workhorse ISR handles audio and video updates

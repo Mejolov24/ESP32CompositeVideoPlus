@@ -1,45 +1,49 @@
 //this is a test file
+#define VIDEO_RES VIDEO_RES_NTSC_336x240P
+#define VIDEO_SUBSAMPLING SUBSAMPLING_422
 #include <Arduino.h>
 #include <AnalogVideo.h>
 #include <CompositeGraphics.h>
-#include <WiFi.h>
+#include "esp_pm.h"
+
 CompositeGraphics graphics;
-void test_rainbow() {
+void test_rainbow()
+{
     uint16_t xres = graphics.xres;
     uint16_t yres = graphics.yres;
 
-    // Saturation radius (max ~90 to avoid DAC voltage clipping)
-    const float saturation = 90.0f; 
-
     for (uint16_t x = 0; x < xres; x++) {
-        // Calculate Hue angle (0 to 2*PI) across X axis
         float angle = ((float)x / (float)xres) * 2.0f * M_PI;
-
-        // Convert hue angle to U and V chroma vectors centered at 128
-        uint8_t u = (uint8_t)(128.0f + saturation * cosf(angle));
-        uint8_t v = (uint8_t)(128.0f + saturation * sinf(angle));
+        
+        float base_u = cosf(angle);
+        float base_v = sinf(angle);
 
         for (uint16_t y = 0; y < yres; y++) {
-            // Map Y axis to Luma (255 at top, 0 at bottom)
-            uint8_t luma = map(y, 0, yres - 1, 255, 0);
+            float brightness_factor = 1.0f - ((float)y / (float)yres);
+            brightness_factor = brightness_factor * brightness_factor;
+            uint8_t luma = (uint8_t)(brightness_factor * 255.0f);
+            float saturation = 127.0f * brightness_factor;
+            uint8_t u = (uint8_t)(128.0f + saturation * base_u);
+            uint8_t v = (uint8_t)(128.0f + saturation * base_v);
 
-            Color color = { luma, u, v };
-            graphics.dotFast(x, y, color);
+            graphics.dotFast(x, y, {luma, u, v});
         }
     }
 }
 
 void setup(){
-    Serial.begin(115200);
-    WiFi.mode(WIFI_OFF);
-    WiFi.disconnect(true);
-    btStop();
+
+    esp_pm_lock_handle_t powerManagementLock;
+    esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "compositeCorePerformanceLock", &powerManagementLock);
+    esp_pm_lock_acquire(powerManagementLock);
     RawCompositeVideoBlitter::video_init();
     graphics.init();
 }
 
-void loop(){
-    graphics.begin();
-    test_rainbow();
-    RawCompositeVideoBlitter::video_sync();
+void loop()
+{
+    RawCompositeVideoBlitter::wait_for_vblank();
+	//graphics.clear();
+	test_rainbow();
+
 }
