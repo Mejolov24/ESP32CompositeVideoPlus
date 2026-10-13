@@ -18,30 +18,21 @@
 /**
  * Change log:
  *
- * Oct 2021 - Original code from https://github.com/rossumur/esp_8_bit
- *            Modified by Marcio Teixeira to extract Atari framebuffer
- *            and make it compatible with Bitluni's code. I don't
- *            really understand this code very well, but there are
- *            some implementation details in the esp_8_bit repo.
+ * Oct 2026 - Original code from https://github.com/rossumur/esp_8_bit
+ *            Modified by Marcio Teixeira to extract Analog color generaation
+ *            and make it compatible with Bitluni's code
  * 
  */
 #ifndef ANALOG_VIDEO_H
     #define ANALOG_VIDEO_H
+
 #include <Arduino.h>
-#include "esp_types.h"
 #include "esp_heap_caps.h"
 #include "esp_attr.h"
 #include "esp_intr_alloc.h"
-#include "esp_err.h"
-#include "soc/gpio_reg.h"
 #include "soc/rtc.h"
-#include "soc/soc.h"
 #include "soc/i2s_struct.h"
 #include "soc/i2s_reg.h"
-#include "soc/ledc_struct.h"
-#include "soc/rtc_io_reg.h"
-#include "soc/io_mux_reg.h"
-#include "rom/gpio.h"
 #include "rom/lldesc.h"
 #include "driver/periph_ctrl.h"
 #include "driver/dac.h"
@@ -49,146 +40,108 @@
 #include "driver/i2s.h"
 #include "Color.h"
 
-#if !defined(SUPPORT_NTSC) && !defined(SUPPORT_PAL)
-    #define SUPPORT_NTSC 1
-    #define SUPPORT_PAL 1
-#endif
 
-#define SUBSAMPLING_444 0
-#define SUBSAMPLING_422 1
-#define SUBSAMPLING_400 2
-typedef int subsampling_t;
 
-#define SUBSAMPLING_BYTES(sub) ( \
-    (sub) == SUBSAMPLING_444 ? 3 : \
-    (sub) == SUBSAMPLING_422 ? 2 : 1)
-
-#define VIDEO_RES_NTSC_256x240P 0
-#define VIDEO_RES_NTSC_320x240P 1
-#define VIDEO_RES_NTSC_336x240P 2
-#define VIDEO_RES_PAL_256x288P  3
-#define VIDEO_RES_PAL_320x288P  4
-#define VIDEO_RES_PAL_352x288P  5
-#define VIDEO_RES_PAL_384x288P  6
-#define VIDEO_RES_COUNT         7
-
-typedef int video_res_t;
-
-typedef struct {
-    video_res_t mode;
-    uint16_t width;
-    uint16_t height;
-    float refresh_rate;
-    bool is_pal;
-    uint16_t total_scanlines; // 262 for NTSC, 312 for PAL
-} video_config_t;
-
-constexpr video_config_t VIDEO_CONFIGS[VIDEO_RES_COUNT] = {
-    // NTSC 240p Modes (262 total scanlines)
-    [VIDEO_RES_NTSC_256x240P] = { VIDEO_RES_NTSC_256x240P, 256, 240, 59.94f, false, 262 },
-    [VIDEO_RES_NTSC_320x240P] = { VIDEO_RES_NTSC_320x240P, 320, 240, 59.94f, false, 262 },
-    [VIDEO_RES_NTSC_336x240P] = { VIDEO_RES_NTSC_336x240P, 336, 240, 59.94f, false, 262 },
-    // PAL 288p Modes (312 total scanlines)
-    [VIDEO_RES_PAL_256x288P]  = { VIDEO_RES_PAL_256x288P,  256, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_320x288P]  = { VIDEO_RES_PAL_320x288P,  320, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_352x288P]  = { VIDEO_RES_PAL_352x288P,  352, 288, 50.00f, true,  312 },
-    [VIDEO_RES_PAL_384x288P]  = { VIDEO_RES_PAL_384x288P,  384, 288, 50.00f, true,  312 }
-
+enum class SubSampling_t{
+    SUBSAMPLING_444, // Full color res
+    SUBSAMPLING_422, // Half color res, almost identical to the human eye as full color. (recommended)
+    SUBSAMPLING_400  // No color
 };
 
-#ifndef VIDEO_PIN
-    #define VIDEO_PIN   26
-#endif
-#ifndef VIDEO_RES
-    #define VIDEO_RES VIDEO_RES_NTSC_336x240P
-#endif
-#ifndef VIDEO_SUBSAMPLING
-    #define VIDEO_SUBSAMPLING SUBSAMPLING_422
-#endif
-#define CURRENT_RES         VIDEO_CONFIGS[VIDEO_RES]
-#define VIDEO_LINE_WIDTH    (CURRENT_RES.width)
-#define VIDEO_LINE_COUNT    (CURRENT_RES.height)
-#define VIDEO_BPP           SUBSAMPLING_BYTES(VIDEO_SUBSAMPLING)
-#define VIDEO_BUFFER_BYTES  (VIDEO_LINE_WIDTH * VIDEO_LINE_COUNT * VIDEO_BPP)
-#define VIDEO_BUFFER_SIZE   ((VIDEO_BUFFER_BYTES + 3) / 4)
+
+#define SUBSAMPLING_BYTES(sub) ( \
+    (sub) == SubSampling_t::SUBSAMPLING_444 ? 3 : \
+    (sub) == SubSampling_t::SUBSAMPLING_422 ? 2 : 1)
+enum class VideoResolution_t{
+    VIDEO_RES_NTSC_256x240P,
+    VIDEO_RES_NTSC_320x240P,
+    VIDEO_RES_NTSC_336x240P,
+    VIDEO_RES_PAL_256x288P,
+    VIDEO_RES_PAL_320x288P,
+    VIDEO_RES_PAL_352x288P,
+    VIDEO_RES_PAL_384x288P,
+};
 
 #define COLORBURST 1
-
-namespace RawCompositeVideoBlitter {
-
-int _pal_ = 0;
-
 #define FB_CHUNK_LINES 16
-#define FB_CHUNKS ((VIDEO_LINE_COUNT + FB_CHUNK_LINES - 1) / FB_CHUNK_LINES)
 
-inline static uint8_t* _lines[VIDEO_LINE_COUNT] = {};
+struct VideoMode_t{
+    VideoResolution_t _video_mode;
+    uint16_t width;
+    uint16_t height;
 
+    bool is_pal;
+    SubSampling_t color_mode;
+
+    uint32_t get_buffer_size_bytes(){
+        return width * height * SUBSAMPLING_BYTES(color_mode);
+    }
+    uint32_t get_buffer_size(){
+        return (get_buffer_size_bytes() + 3) / 4;
+    }
+    uint32_t get_frame_buffer_chunks(){
+        return (height + FB_CHUNK_LINES - 1) / FB_CHUNK_LINES;
+    }
+    
+};
+
+constexpr VideoMode_t _video_modes[] = {
+    // NTSC 240p (262 scanlines)
+    { VideoResolution_t::VIDEO_RES_NTSC_256x240P, 256, 240, false },
+    { VideoResolution_t::VIDEO_RES_NTSC_320x240P, 320, 240, false },
+    { VideoResolution_t::VIDEO_RES_NTSC_336x240P, 336, 240, false },
+    // PAL 288p (312 scanlines)
+    { VideoResolution_t::VIDEO_RES_PAL_256x288P, 256, 288, true  },
+    { VideoResolution_t::VIDEO_RES_PAL_320x288P, 320, 288, true  },
+    { VideoResolution_t::VIDEO_RES_PAL_352x288P, 352, 288, true  },
+    { VideoResolution_t::VIDEO_RES_PAL_384x288P, 384, 288, true  },
+};
+
+
+namespace CompositeVideoBlitter {
+
+
+VideoMode_t _video_mode;
+int32_t frame_buffer_chunks = 0;
+uint8_t** _lines = nullptr;
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
 inline void set_pixel(uint16_t x, uint16_t y, Color color)
 {
 	uint8_t* line = _lines[y];
+    switch (_video_mode.color_mode){
+    case SubSampling_t::SUBSAMPLING_444:{
+		size_t index = x * 3;
 
-	#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-
+		line[index + 0] = color.y;
+		line[index + 1] = color.u;
+		line[index + 2] = color.v;
+        break;
+    }
+    case SubSampling_t::SUBSAMPLING_422:{
 		uint16_t evenX = x & ~1;
 		size_t block_index = evenX * 2;
 
 		line[block_index + (x & 1)] = color.y;
 		line[block_index + 2] = color.u;
 		line[block_index + 3] = color.v;
-
-	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-
-		line[x] = color.y;
-
-	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-
-		size_t index = x * 3;
-
-		line[index + 0] = color.y;
-		line[index + 1] = color.u;
-		line[index + 2] = color.v;
-
-	#endif
+        break;
+    }
+    case SubSampling_t::SUBSAMPLING_400:
+        line[x] = color.y;
+        break;
+    default:
+        break;
+    }
 }
 
 void frame_clear(Color color)
 {
-	for (int y = 0; y < VIDEO_LINE_COUNT; y++) {
-
-		uint8_t* line = _lines[y];
-
-		#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-
-			for (int x = 0; x < VIDEO_LINE_WIDTH; x += 2) {
-				line[0] = color.y;
-				line[1] = color.y;
-				line[2] = color.u;
-				line[3] = color.v;
-
-				line += 4;
-			}
-
-		#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-
-			memset(line, color.y, VIDEO_LINE_WIDTH);
-
-		#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-
-			for (int x = 0; x < VIDEO_LINE_WIDTH; x++) {
-				line[0] = color.y;
-				line[1] = color.u;
-				line[2] = color.v;
-
-				line += 3;
-			}
-
-		#endif
+	for (uint32_t y = 0; y < _video_mode.height; y++) {
+        for (uint32_t x = 0; y < _video_mode.width; x++){set_pixel(x,y,color);}
 	}
 }
-
 /**
  * Creates a framebuffer. The caps argument can be one of the following:
  *
@@ -269,20 +222,15 @@ static esp_err_t start_dma(int line_width,int samples_per_cc, int ch = 1)
     //  see calc_freq() for math: (4+a)*10/((2 + b)*2) mhz
     //  up to 20mhz seems to work ok:
     //  rtc_clk_apll_enable(1,0x00,0x00,0x4,0);   // 20mhz for fancy DDS
-
-    #if SUPPORT_NTSC
-        if (!_pal_) {
+    if(_video_mode.is_pal){
+        rtc_clk_apll_enable(1,0x04,0xA4,0x6,1);     // 17.734476mhz ~4x PAL
+    }
+    else{
             switch (samples_per_cc) {
                 case 3: rtc_clk_apll_enable(1,0x46,0x97,0x4,2);   break;    // 10.7386363636 3x NTSC (10.7386398315mhz)
                 case 4: rtc_clk_apll_enable(1,0x46,0x97,0x4,1);   break;    // 14.3181818182 4x NTSC (14.3181864421mhz)
             }
-        }
-    #endif
-    #if SUPPORT_PAL
-        if (_pal_) {
-            rtc_clk_apll_enable(1,0x04,0xA4,0x6,1);     // 17.734476mhz ~4x PAL
-        }
-    #endif
+    }
 
     I2S0.clkm_conf.clkm_div_num = 1;            // I2S clock divider’s integral value.
     I2S0.clkm_conf.clkm_div_b = 0;              // Fractional clock divider’s numerator value.
@@ -339,14 +287,11 @@ uint32_t us() {
 volatile int _line_counter = 0;
 volatile int _frame_counter = 0;
 
-int _active_lines;
-int _line_count;
-
-int _line_width;
 int _samples_per_cc = 4; // 3 or 4
 float _sample_rate;
 
 int _hsync;
+int _line_count;
 int _hsync_long;
 int _hsync_short;
 int _burst_start;
@@ -387,51 +332,31 @@ static void init_yuv_luts(){
         y_lut[i] = (uint16_t)(black + ((i * luma_range) / 255));
         uv_lut[i] = (int16_t)((((int32_t)i -128) * (luma_range * 25 / 100)) / 128);
     }
-}void video_init()
-{
-	video_config_t config = CURRENT_RES;
-	_pal_ = config.is_pal ? 1 : 0;
+}bool setup_video(VideoMode_t video_mode){
+    _video_mode = video_mode;
 	init_yuv_luts();
 
-	size_t line_bytes = VIDEO_LINE_WIDTH * VIDEO_BPP;
+    uint32_t line_bytes = _video_mode.width * SUBSAMPLING_BYTES(_video_mode.color_mode);
 
-	Serial.printf("Framebuffer: %u bytes total\n", VIDEO_BUFFER_BYTES);
-	Serial.printf("Line: %u bytes\n", line_bytes);
-
-	for (int y = 0; y < VIDEO_LINE_COUNT; y++) {
+	for (int y = 0; y < _video_mode.height ; y++) {
 
 		_lines[y] = (uint8_t*)heap_caps_malloc(
 			line_bytes,
 			MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
 		);
 
-		if (!_lines[y]) {
-			Serial.printf(
-				"ERROR: Failed to allocate framebuffer line %d (%u bytes)\n",
-				y,
-				line_bytes
-			);
-
-			while (1) {
-				delay(1000);
-			}
-		}
+		if (!_lines[y]) {return false;}
 	}
-
-	#if SUPPORT_PAL
-		if (_pal_)
-			pal_init();
-	#endif
-
-	#if SUPPORT_NTSC
-		if (!_pal_)
-			ntsc_init();
-	#endif
+    if(_video_mode.is_pal){
+        pal_init();
+    }
+    else{
+        ntsc_init();
+    }
 
 	frame_clear(Color());
-
-	_active_lines = config.height;
-	video_init_hw(_line_width, _samples_per_cc);
+	video_init_hw(_video_mode.width, _samples_per_cc);
+    return true;
 }
 
 #define BEGIN_TIMING()
@@ -443,12 +368,10 @@ void perf(){};
 //===================================================================================================
 //===================================================================================================
 // PAL
-
-#if SUPPORT_PAL
     void pal_init()
     {
         _sample_rate = PAL_FREQUENCY*_samples_per_cc/1000000.0;       // DAC rate in mhz
-        _line_width = PAL_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
+        _video_mode.width = PAL_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
         _line_count = PAL_LINES;
         _hsync_short = usec(2);
         _hsync_long = usec(30);
@@ -577,26 +500,19 @@ void perf(){};
     void IRAM_ATTR pal_sync(uint16_t* line, int i)
     {
         uint8_t t = _sync_type[i-304];
-        pal_sync2(line,_line_width/2, t & 2);
-        pal_sync2(line+_line_width/2,_line_width/2, t & 1);
+        pal_sync2(line,_video_mode.width/2, t & 2);
+        pal_sync2(line+_video_mode.width/2,_video_mode.width/2, t & 1);
     }
 
-#endif
+
 
 //===================================================================================================
 //===================================================================================================
-// ntsc tables
-// AA AA                // 2 pixels, 1 color clock - atari
-// AA AB BB             // 3 pixels, 2 color clocks - nes
-// AAA ABB BBC CCC      // 4 pixels, 3 color clocks - sms
+// NTSC
 
-// cc == 3 gives 684 samples per line, 3 samples per cc, 3 pixels for 2 cc
-// cc == 4 gives 912 samples per line, 4 samples per cc, 2 pixels per cc
-
-#if SUPPORT_NTSC
     void ntsc_init() {
         _sample_rate = 315.0/88 * _samples_per_cc;   // DAC rate
-        _line_width = NTSC_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
+        _video_mode.width = NTSC_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
         _line_count = NTSC_LINES;
         _hsync_long = usec(63.555-4.7);
         _active_start = usec(_samples_per_cc == 4 ? 10 : 10.5);
@@ -605,60 +521,67 @@ void perf(){};
 
     // draw a line of game in NTSC
     void IRAM_ATTR blit_ntsc(uint8_t* src, uint16_t* dst)
-    {
-        #if VIDEO_SUBSAMPLING == SUBSAMPLING_422
-        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
-            uint8_t y0 = src[0];
-            uint8_t y1 = src[1];
-            uint8_t u = src[2];
-            uint8_t v = src[3];
-            int16_t u_val = uv_lut[u];
-            int16_t v_val = uv_lut[v];
-            dst[0^1] = clamp_dac(y_lut[y0] + u_val);
-            dst[1^1] = clamp_dac(y_lut[y0] + v_val);
-            dst[2^1] = clamp_dac(y_lut[y1] - u_val);
-            dst[3^1] = clamp_dac(y_lut[y1] - v_val);
+    {   
+        switch (_video_mode.color_mode){
+        case SubSampling_t::SUBSAMPLING_444:
+            for(int i = 0; i < _video_mode.width; i += 2){
+                uint8_t y0 = src[0];
+                uint8_t u0 = src[1];
+                uint8_t v0 = src[2];
 
-            dst += 4;
-            src += 4;
+                uint8_t y1 = src[3];
+                uint8_t u1 = src[4];
+                uint8_t v1 = src[5];
+
+                // Average or select a stable chroma vector for the color clock pair 
+                // to preserve subcarrier phase integrity while keeping luma independent
+                int16_t u_val = uv_lut[(u0 + u1) / 2];
+                int16_t v_val = uv_lut[(v0 + v1) / 2];
+
+                dst[0^1] = clamp_dac(y_lut[y0] + u_val);
+                dst[1^1] = clamp_dac(y_lut[y0] + v_val);
+                dst[2^1] = clamp_dac(y_lut[y1] - u_val);
+                dst[3^1] = clamp_dac(y_lut[y1] - v_val);
+
+                dst += 4;
+                src += 6;
+            }
+            break;
+        case SubSampling_t::SUBSAMPLING_422:
+            for(int i = 0; i < _video_mode.width; i += 2){
+                uint8_t y0 = src[0];
+                uint8_t y1 = src[1];
+                uint8_t u = src[2];
+                uint8_t v = src[3];
+                int16_t u_val = uv_lut[u];
+                int16_t v_val = uv_lut[v];
+                dst[0^1] = clamp_dac(y_lut[y0] + u_val);
+                dst[1^1] = clamp_dac(y_lut[y0] + v_val);
+                dst[2^1] = clamp_dac(y_lut[y1] - u_val);
+                dst[3^1] = clamp_dac(y_lut[y1] - v_val);
+
+                dst += 4;
+                src += 4;
+            }
+            break;
+        case SubSampling_t::SUBSAMPLING_400:
+            for(int i = 0; i <  _video_mode.width; i += 2){
+                uint16_t ly0 = y_lut[src[0]];
+                uint16_t ly1 = y_lut[src[1]];
+
+                dst[0^1] = ly0;
+                dst[1^1] = ly0;
+                dst[2^1] = ly1;
+                dst[3^1] = ly1;
+
+                dst += 4;
+                src += 2;
+            }
+        break;
+
+        default:
+            break;
         }
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
-            uint8_t y0 = src[0];
-            uint8_t u0 = src[1];
-            uint8_t v0 = src[2];
-
-            uint8_t y1 = src[3];
-            uint8_t u1 = src[4];
-            uint8_t v1 = src[5];
-
-            // Average or select a stable chroma vector for the color clock pair 
-            // to preserve subcarrier phase integrity while keeping luma independent
-            int16_t u_val = uv_lut[(u0 + u1) / 2];
-            int16_t v_val = uv_lut[(v0 + v1) / 2];
-
-            dst[0^1] = clamp_dac(y_lut[y0] + u_val);
-            dst[1^1] = clamp_dac(y_lut[y0] + v_val);
-            dst[2^1] = clamp_dac(y_lut[y1] - u_val);
-            dst[3^1] = clamp_dac(y_lut[y1] - v_val);
-
-            dst += 4;
-            src += 6;
-        }
-        #elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
-        for(int i = 0; i < VIDEO_LINE_WIDTH; i += 2){
-            uint16_t ly0 = y_lut[src[0]];
-            uint16_t ly1 = y_lut[src[1]];
-
-            dst[0^1] = ly0;
-            dst[1^1] = ly0;
-            dst[2^1] = ly1;
-            dst[3^1] = ly1;
-
-            dst += 4;
-            src += 2;
-        }
-        #endif
         END_TIMING();
     }
     
@@ -696,28 +619,20 @@ void perf(){};
                 break;
         }
     }
-#endif
 
 void IRAM_ATTR blit(uint8_t* src, uint16_t* dst)
 {
     BEGIN_TIMING();
-    #if SUPPORT_PAL
-    if (_pal_) blit_pal(src,dst);
-    #endif
-    #if SUPPORT_NTSC
-    if (!_pal_) blit_ntsc(src,dst);
-    #endif
+    if(_video_mode.is_pal){blit_pal(src,dst);}
+    else{blit_ntsc(src,dst);}
+
     END_TIMING();
 }
 
 void IRAM_ATTR burst(uint16_t* line)
 {
-    #if SUPPORT_PAL
-        if (_pal_) burst_pal(line);
-    #endif
-    #if SUPPORT_NTSC
-        if(!_pal_) burst_ntsc(line);
-    #endif
+    if(_video_mode.is_pal){burst_pal(line);}
+    else{burst_ntsc(line);}
 }
 
 void IRAM_ATTR sync(uint16_t* line, int syncwidth)
@@ -730,7 +645,7 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
 {
     int syncwidth = vbl ? _hsync_long : _hsync;
     sync(line,syncwidth);
-    for (int i = syncwidth; i < _line_width; i++)
+    for (int i = syncwidth; i < _video_mode.width; i++)
         line[i] = BLANKING_LEVEL;
     if (!vbl)
         burst(line);    // no burst during vbl
@@ -744,26 +659,15 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
       if (!_lines)
         return;
       int n = 0;
-      if (_pal_) {
-        if (_line_counter < _active_lines)
-          n = (_active_lines - _line_counter)*1000/15600;
+      if (_video_mode.is_pal) {
+        if (_line_counter < _video_mode.height)
+          n = (_video_mode.height - _line_counter)*1000/15600;
       } else {
-        if (_line_counter < _active_lines)
-          n = (_active_lines - _line_counter)*1000/15720;
+        if (_line_counter < _video_mode.height)
+          n = (_video_mode.height - _line_counter)*1000/15720;
       }
       vTaskDelay(n+1);
     }
-#endif
-
-#ifdef ESP_PLATFORM
-void wait_for_vblank()
-{
-	while (_line_counter < _active_lines)
-		taskYIELD();
-
-	while (_line_counter >= _active_lines)
-		taskYIELD();
-}
 #endif
 
 // Workhorse ISR handles audio and video updates
@@ -775,24 +679,14 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
 
     ISR_BEGIN();
 
-    #if SUPPORT_AUDIO
-        uint8_t s = _audio_r < _audio_w ? _audio_buffer[_audio_r++ & (sizeof(_audio_buffer)-1)] : 0x20;
-        audio_sample(s);
-        //audio_sample(_sin64[_x++ & 0x3F]);
-    #endif
-
-    #ifdef IR_PIN
-        ir_sample();
-    #endif
-
     int i = _line_counter++;
     uint16_t* buf = (uint16_t*)vbuf;
-    #if SUPPORT_PAL
-        if (_pal_) {
+
+        if (_video_modes->is_pal) {
             // pal
             if (i < 32) {
                 blanking(buf,false);                // pre render/black 0-32
-            } else if (i < _active_lines + 32) {    // active video 32-272
+            } else if (i < _video_mode.height + 32) {    // active video 32-272
                 sync(buf,_hsync);
                 burst(buf);
                 blit(_lines[i-32],buf + _active_start);
@@ -803,26 +697,23 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
                 pal_sync(buf,i);                    // 8 lines of sync 304-312
             }
         }
-    #endif
-    #if SUPPORT_NTSC
-        if(!_pal_) {
+        else {
             // ntsc
-            if (i < _active_lines) {                // active video
+            if (i < _video_mode.height) {                // active video
                 sync(buf,_hsync);
                 burst(buf);
                 blit(_lines[i],buf + _active_start);
 
-            } else if (i < (_active_lines + 5)) {   // post render/black
+            } else if (i < (_video_mode.height + 5)) {   // post render/black
                 blanking(buf,false);
 
-            } else if (i < (_active_lines + 8)) {   // vsync
+            } else if (i < (_video_mode.height + 8)) {   // vsync
                 blanking(buf,true);
 
             } else {                                // pre render/black
                 blanking(buf,false);
             }
         }
-    #endif
 
     if (_line_counter == _line_count) {
         _line_counter = 0;                      // frame is done
@@ -832,70 +723,5 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
     ISR_END();
 }
 
-//===================================================================================================
-//===================================================================================================
-// sound routines from "src/gui.cpp" and "src/emu.cpp"
-
-#if SUPPORT_AUDIO
-    //  audio is buffered as 6 bit unsigned samples
-    uint8_t _audio_buffer[1024];
-    uint32_t _audio_r = 0;
-    uint32_t _audio_w = 0;
-    void audio_write_16(const int16_t* s, int len, int channels)
-    {
-        int b;
-        while (len--) {
-            if (_audio_w == (_audio_r + sizeof(_audio_buffer)))
-                break;
-            if (channels == 2) {
-                b = (s[0] + s[1]) >> 9;
-                s += 2;
-            } else
-                b = *s++ >> 8;
-            if (b < -32) b = -32;
-            if (b > 31) b = 31;
-            _audio_buffer[_audio_w++ & (sizeof(_audio_buffer)-1)] = b + 32;
-        }
-    }
-#endif
-
-#if 0
-    Emu::Emu(const char* n,int w,int h, int st, int aformat, int cc, int f) :
-        name(n),width(w),height(h),standard(st),audio_format(aformat),cc_width(cc),flavor(f)
-    {
-        //audio_frequency = 15625; // requires fixed point sampler
-        audio_frequency = standard == 1 ? 15720 : 15600;
-        audio_frame_samples = standard ? (audio_frequency << 16)/60 : (audio_frequency << 16)/50;   // fixed point sampler
-        audio_fraction = 0;
-    }
-
-    int audio_format = (16 | (1 << 8));
-
-    // soft click wave soundy thing
-    const uint16_t _wav[16] =  {
-        0x0000,0x187D,0x2D41,0x3B20,0x3FFF,0x3B20,0x2D41,0x187D,
-        0x0000,0xE783,0xD2BF,0xC4E0,0xC001,0xC4E0,0xD2BF,0xE783
-    };
-
-    void update_audio()
-    {
-        int16_t abuffer[313*2];
-        int format = _emu->audio_format >> 8;
-        int sample_count = _emu->frame_sample_count();
-        if (_visible) {
-            format = 1;
-            if (_click) {
-                _click = 0;
-                for (int i = 0; i < sample_count; i++)
-                    abuffer[i] = _wav[i&0xF];  // just a signed sine click
-            } else
-              memset(abuffer,0,sizeof(abuffer));
-        } else {
-            sample_count = _emu->audio_buffer(abuffer,sizeof(abuffer));
-        }
-        audio_write_16(abuffer,sample_count,format);
-    }
-#endif
-
-} // Namespace RawCompositeVideoBlitter
+} // Namespace CompositeVideoBlitter
 #endif
