@@ -1,17 +1,22 @@
-//this is a test file
-#define VIDEO_RES VIDEO_RES_NTSC_336x240P
-#define VIDEO_SUBSAMPLING SUBSAMPLING_444
 #include <Arduino.h>
-#include <AnalogVideo.h>
+#include <CompositeVideo.h>
 #include <CompositeGraphics.h>
-#include "esp_pm.h"
+#include <CompositeColor.h>
 #include <AudioPWM.h>
+#include "esp_pm.h"
 
 #include "font6x8.h"
 Font<CompositeGraphics> font(6, 8, font6x8::pixels);
 AudioPWM audio;
 
+CompositeVideoBuffer scanout_buffer; // where we push
+CompositeVideoBuffer frame_buffer; // where we render
+
+VideoResolution_t resolution = VideoResolution_t::VIDEO_RES_NTSC_336x240P;
+SubSampling_t subsampling = SubSampling_t::SUBSAMPLING_422; // recommended, saves memory and looks almost identical
+
 CompositeGraphics graphics;
+
 void test_rainbow()
 {
     uint16_t xres = graphics.xres;
@@ -38,14 +43,20 @@ void test_rainbow()
 
 
 float phase = 0.0;
+bool has_fr_buffer = false;
 
 void setup(){
-
     esp_pm_lock_handle_t powerManagementLock;
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "compositeCorePerformanceLock", &powerManagementLock);
     esp_pm_lock_acquire(powerManagementLock);
-    RawCompositeVideoBlitter::video_init();
-    graphics.init();
+
+    scanout_buffer.init(resolution, subsampling);
+    has_fr_buffer = frame_buffer.init(resolution, subsampling);
+
+    if(has_fr_buffer){graphics.set_buffer(frame_buffer);}
+    else{graphics.set_buffer(scanout_buffer);} // we dont have enough Memory, draw directly.
+    CompositeVideoBlitter::setup_video(scanout_buffer);
+
     graphics.setFont(font);
     graphics.setTextColor(Color::fromRGB(255,255,255));
     graphics.setCursor(graphics.xres / 2, graphics.yres / 2);
@@ -59,8 +70,9 @@ void setup(){
 
 void loop()
 {
-    //RawCompositeVideoBlitter::wait_for_vblank();
-	//graphics.clear();
+    CompositeVideoBlitter::video_sync();
+    if(has_fr_buffer){scanout_buffer.pushFromBuffer(frame_buffer);}
+    
     while (audio.available() < 1024) {
     int16_t sine_chunk[512];
 

@@ -1,39 +1,30 @@
-#pragma once
-#include "AnalogVideo.h"
+#include "CompositeVideo.h"
 #include "Font.h"
-#include "TriangleTree.h"
 
 class CompositeGraphics
 { 
-public:
-    int xres = VIDEO_LINE_WIDTH;
-    int yres = VIDEO_LINE_COUNT;
+    private:
     
-    int cursorX, cursorY, cursorBaseX;
+    uint16_t cursorX = 0;
+    uint16_t cursorY = 0;
+    uint16_t cursorBaseX = 0;
+    public:
+    uint16_t xres = 0;
+    uint16_t yres = 0;
+    private:
+    
     Color frontColor;
     Color backColor;
-    bool hasBackColor;
-    
-    Font<CompositeGraphics> *font;
-    TriangleTree<CompositeGraphics> *triangleBuffer;
-    TriangleTree<CompositeGraphics> *triangleRoot;
-    int trinagleBufferSize;
-    int triangleCount;
+    bool hasBackColor = 0;
+    Font<CompositeGraphics> *font = nullptr;
+    CompositeVideoBuffer* frame_buffer = nullptr;
+    public:
 
-    CompositeGraphics(int w = VIDEO_LINE_WIDTH, int h = VIDEO_LINE_COUNT, int initialTriangleBufferSize = 0)
-        : xres(w), yres(h)
-    {
-        font = nullptr;
-        cursorX = cursorY = cursorBaseX = 0;
-        trinagleBufferSize = initialTriangleBufferSize;
-        triangleCount = 0;
-        frontColor = Color{255, 128, 128}; // White default
-        backColor = Color{0, 128, 128};    // Black default
-        hasBackColor = false;
-    }
-
-    ~CompositeGraphics() {
-        if (triangleBuffer) free(triangleBuffer);
+    void set_buffer(CompositeVideoBuffer render_buffer){
+        VideoMode_t video_mode = render_buffer.getVideoMode();
+        yres = video_mode.width;
+        xres = video_mode.height;
+        frame_buffer = &render_buffer;
     }
 
     void setTextColor(Color front, Color back = Color{0, 0, 0})
@@ -41,18 +32,6 @@ public:
         frontColor = front;
         backColor = back;
         hasBackColor = (back.y != 0 || back.u != 0 || back.v != 0);
-    }
-
-    void init()
-    {
-        xres = VIDEO_LINE_WIDTH;
-        yres = VIDEO_LINE_COUNT;
-
-        // Allocate single flat backbuffer matching DMA buffer size
-
-        if (trinagleBufferSize > 0) {
-            triangleBuffer = (TriangleTree<CompositeGraphics>*)malloc(sizeof(TriangleTree<CompositeGraphics>) * trinagleBufferSize);
-        }
     }
 
     void setFont(Font<CompositeGraphics> &font)
@@ -104,15 +83,13 @@ public:
 
     inline void clear(Color clearColor = Color{0, 128, 128})
 {
-	RawCompositeVideoBlitter::frame_clear(clearColor);
+	CompositeVideoBlitter::frame_clear(clearColor);
 
-	triangleCount = 0;
-	triangleRoot = nullptr;
 }
 
     inline void dotFast(int x, int y, Color color)
 {
-	uint8_t* line = RawCompositeVideoBlitter::_lines[y];
+	uint8_t* line = CompositeVideoBlitter::frame_buffer->lines[y];
 
 	#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
 
@@ -151,17 +128,6 @@ public:
         if (x1 > xres) x1 = xres;
         for (int x = x0; x < x1; x++)
             dotFast(x, y, color);
-    }
-
-    void enqueueTriangle(short *v0, short *v1, short *v2, Color color)
-    {
-        if (triangleCount >= trinagleBufferSize) return;
-        TriangleTree<CompositeGraphics> &t = triangleBuffer[triangleCount++];
-        t.set(v0, v1, v2, color);
-        if (triangleRoot)
-            triangleRoot->add(&triangleRoot, t);
-        else
-            triangleRoot = &t;
     }
 
     void triangle(short *v0, short *v1, short *v2, Color color)
@@ -229,12 +195,6 @@ public:
                 dot(x, y, color);
             }
         }
-    }
-
-    inline void flush()
-    {
-        if (triangleRoot)
-            triangleRoot->draw(*this);
     }
 
     void fillRect(int x, int y, int w, int h, Color color)

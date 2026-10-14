@@ -38,9 +38,7 @@
 #include "driver/dac.h"
 #include "driver/gpio.h"
 #include "driver/i2s.h"
-#include "Color.h"
-
-
+#include "CompositeColor.h"
 
 enum class SubSampling_t{
     SUBSAMPLING_444, // Full color res
@@ -62,27 +60,14 @@ enum class VideoResolution_t{
     VIDEO_RES_PAL_384x288P,
 };
 
-#define COLORBURST 1
-#define FB_CHUNK_LINES 16
-
 struct VideoMode_t{
     VideoResolution_t _video_mode;
     uint16_t width;
     uint16_t height;
-
     bool is_pal;
-    SubSampling_t color_mode;
 
-    uint32_t get_buffer_size_bytes(){
-        return width * height * SUBSAMPLING_BYTES(color_mode);
-    }
-    uint32_t get_buffer_size(){
-        return (get_buffer_size_bytes() + 3) / 4;
-    }
-    uint32_t get_frame_buffer_chunks(){
-        return (height + FB_CHUNK_LINES - 1) / FB_CHUNK_LINES;
-    }
-    
+    uint16_t line_width;
+    SubSampling_t color_mode;
 };
 
 constexpr VideoMode_t _video_modes[] = {
@@ -97,19 +82,70 @@ constexpr VideoMode_t _video_modes[] = {
     { VideoResolution_t::VIDEO_RES_PAL_384x288P, 384, 288, true  },
 };
 
+class CompositeVideoBuffer{
+    private:
+    VideoMode_t video_mode;
+    public:
+    uint8_t** lines = nullptr;
+
+    bool init(VideoResolution_t resolution, SubSampling_t subsampling){
+        video_mode = _video_modes[static_cast<uint8_t>(resolution)];
+        uint32_t line_bytes = video_mode.width * SUBSAMPLING_BYTES(subsampling);
+        video_mode.color_mode = subsampling;
+
+        lines = (uint8_t**)heap_caps_malloc(video_mode.height * sizeof(uint8_t*), MALLOC_CAP_INTERNAL);
+        if (!lines) return false;
+
+        for (uint32_t y = 0; y < video_mode.height; y++) {
+            lines[y] = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            if (!lines[y]) {
+                for (uint32_t x = 0; x < y; x++) heap_caps_free(lines[x]);
+                heap_caps_free(lines);
+                lines = nullptr;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void pushFromBuffer(CompositeVideoBuffer& buffer){
+        VideoMode_t source_mode = buffer.getVideoMode();
+
+        uint32_t source_bytes = source_mode.width * SUBSAMPLING_BYTES(source_mode.color_mode);
+        uint32_t current_bytes = source_mode.width * SUBSAMPLING_BYTES(video_mode.color_mode);
+        if (source_bytes != current_bytes) return;
+
+        for (uint32_t y = 0; y < source_mode.height; y++){
+            memcpy(lines[y], buffer.lines[y], source_bytes);
+        }
+    }
+
+
+    VideoMode_t getVideoMode(){
+        return video_mode;
+    }
+
+    ~CompositeVideoBuffer(){
+        if (lines) {
+            for (uint32_t y = 0; y < video_mode.height; y++)
+                if (lines[y]) heap_caps_free(lines[y]);
+            heap_caps_free(lines);
+            lines = nullptr;
+        }
+    }
+};
 
 namespace CompositeVideoBlitter {
 
 
 VideoMode_t _video_mode;
-int32_t frame_buffer_chunks = 0;
-uint8_t** _lines = nullptr;
+CompositeVideoBuffer* frame_buffer = nullptr;
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
 inline void set_pixel(uint16_t x, uint16_t y, Color color)
 {
-	uint8_t* line = _lines[y];
+	uint8_t* line = frame_buffer->lines[y];
     switch (_video_mode.color_mode){
     case SubSampling_t::SUBSAMPLING_444:{
 		size_t index = x * 3;
@@ -139,7 +175,7 @@ inline void set_pixel(uint16_t x, uint16_t y, Color color)
 void frame_clear(Color color)
 {
 	for (uint32_t y = 0; y < _video_mode.height; y++) {
-        for (uint32_t x = 0; y < _video_mode.width; x++){set_pixel(x,y,color);}
+        for (uint32_t x = 0; x < _video_mode.width; x++){set_pixel(x,y,color);}
 	}
 }
 /**
@@ -332,21 +368,12 @@ static void init_yuv_luts(){
         y_lut[i] = (uint16_t)(black + ((i * luma_range) / 255));
         uv_lut[i] = (int16_t)((((int32_t)i -128) * (luma_range * 25 / 100)) / 128);
     }
-}bool setup_video(VideoMode_t video_mode){
-    _video_mode = video_mode;
+}
+
+void setup_video(CompositeVideoBuffer& render_buffer){
+    _video_mode = render_buffer.getVideoMode();
+    frame_buffer = &render_buffer;
 	init_yuv_luts();
-
-    uint32_t line_bytes = _video_mode.width * SUBSAMPLING_BYTES(_video_mode.color_mode);
-
-	for (int y = 0; y < _video_mode.height ; y++) {
-
-		_lines[y] = (uint8_t*)heap_caps_malloc(
-			line_bytes,
-			MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT
-		);
-
-		if (!_lines[y]) {return false;}
-	}
     if(_video_mode.is_pal){
         pal_init();
     }
@@ -355,8 +382,7 @@ static void init_yuv_luts(){
     }
 
 	frame_clear(Color());
-	video_init_hw(_video_mode.width, _samples_per_cc);
-    return true;
+	video_init_hw(_video_mode.line_width, _samples_per_cc);
 }
 
 #define BEGIN_TIMING()
@@ -371,7 +397,7 @@ void perf(){};
     void pal_init()
     {
         _sample_rate = PAL_FREQUENCY*_samples_per_cc/1000000.0;       // DAC rate in mhz
-        _video_mode.width = PAL_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
+        _video_mode.line_width = PAL_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
         _line_count = PAL_LINES;
         _hsync_short = usec(2);
         _hsync_long = usec(30);
@@ -500,8 +526,8 @@ void perf(){};
     void IRAM_ATTR pal_sync(uint16_t* line, int i)
     {
         uint8_t t = _sync_type[i-304];
-        pal_sync2(line,_video_mode.width/2, t & 2);
-        pal_sync2(line+_video_mode.width/2,_video_mode.width/2, t & 1);
+        pal_sync2(line,_video_mode.line_width/2, t & 2);
+        pal_sync2(line+_video_mode.line_width/2,_video_mode.line_width/2, t & 1);
     }
 
 
@@ -512,7 +538,7 @@ void perf(){};
 
     void ntsc_init() {
         _sample_rate = 315.0/88 * _samples_per_cc;   // DAC rate
-        _video_mode.width = NTSC_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
+        _video_mode.line_width = NTSC_COLOR_CLOCKS_PER_SCANLINE*_samples_per_cc;
         _line_count = NTSC_LINES;
         _hsync_long = usec(63.555-4.7);
         _active_start = usec(_samples_per_cc == 4 ? 10 : 10.5);
@@ -592,17 +618,18 @@ void perf(){};
             case 4:
                 // 4 samples per color clock
                 for (i = _hsync; i < _hsync + (4*10); i += 4) {
-                    #if COLORBURST
+                    if(_video_mode.color_mode == SubSampling_t::SUBSAMPLING_444){
                         line[i+1] = BLANKING_LEVEL;
                         line[i+0] = BLANKING_LEVEL + BLANKING_LEVEL/2;
                         line[i+3] = BLANKING_LEVEL;
                         line[i+2] = BLANKING_LEVEL - BLANKING_LEVEL/2;
-                    #else
+                    }
+                    else{
                         line[i+1] = BLANKING_LEVEL;
                         line[i+0] = BLANKING_LEVEL;
                         line[i+3] = BLANKING_LEVEL;
                         line[i+2] = BLANKING_LEVEL;
-                    #endif
+                    }
                 }
                 break;
             case 3:
@@ -645,7 +672,7 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
 {
     int syncwidth = vbl ? _hsync_long : _hsync;
     sync(line,syncwidth);
-    for (int i = syncwidth; i < _video_mode.width; i++)
+    for (int i = syncwidth; i < _video_mode.line_width; i++)
         line[i] = BLANKING_LEVEL;
     if (!vbl)
         burst(line);    // no burst during vbl
@@ -656,7 +683,7 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
 #ifdef ESP_PLATFORM
     void video_sync()
     {
-      if (!_lines)
+      if (!frame_buffer->lines)
         return;
       int n = 0;
       if (_video_mode.is_pal) {
@@ -674,7 +701,7 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
 extern "C"
 void IRAM_ATTR video_isr(volatile void* vbuf)
 {
-    if (!_lines)
+    if (!frame_buffer->lines)
         return;
 
     ISR_BEGIN();
@@ -682,14 +709,14 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
     int i = _line_counter++;
     uint16_t* buf = (uint16_t*)vbuf;
 
-        if (_video_modes->is_pal) {
+        if (_video_mode.is_pal) {
             // pal
             if (i < 32) {
                 blanking(buf,false);                // pre render/black 0-32
             } else if (i < _video_mode.height + 32) {    // active video 32-272
                 sync(buf,_hsync);
                 burst(buf);
-                blit(_lines[i-32],buf + _active_start);
+                blit(frame_buffer->lines[i-32],buf + _active_start);
             } else if (i < 304) {                   // post render/black 272-304
                 if (i < 274)                        // slight optimization here, once you have 2 blanking buffers
                     blanking(buf,false);
@@ -702,7 +729,7 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
             if (i < _video_mode.height) {                // active video
                 sync(buf,_hsync);
                 burst(buf);
-                blit(_lines[i],buf + _active_start);
+                blit(frame_buffer->lines[i],buf + _active_start);
 
             } else if (i < (_video_mode.height + 5)) {   // post render/black
                 blanking(buf,false);

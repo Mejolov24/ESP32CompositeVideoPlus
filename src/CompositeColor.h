@@ -1,17 +1,23 @@
-#include <stdint.h>
-#include <algorithm>
-
 #ifndef COMPOSITE_COLOR_H
-    #define COMPOSITE_COLOR_Hstruct
+    #define COMPOSITE_COLOR_H
+    #include <stdint.h>
+    #include <algorithm>
+
+
 struct Color {
     uint8_t y; // Luma: 0 to 255
     uint8_t u; // Chroma (B-Y): 0 to 255 (128 = neutral/no color)
     uint8_t v; // Chroma (R-Y): 0 to 255 (128 = neutral/no color)
 
     // Default constructor (Black)
+    
     Color() : y(0), u(128), v(128) {}
 
     // Direct YUV constructor
+    Color(uint32_t raw)
+	: y((raw >> 16) & 0xFF),
+	  u((raw >> 8) & 0xFF),
+	  v(raw & 0xFF) {}
     Color(uint8_t _y, uint8_t _u, uint8_t _v) : y(_y), u(_u), v(_v) {}
 
     // RGB (0..255) to YUV (BT.601 Full Range)
