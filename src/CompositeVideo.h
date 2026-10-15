@@ -563,10 +563,10 @@ void perf(){};
                 int16_t u_val = uv_lut[(u0 + u1) / 2];
                 int16_t v_val = uv_lut[(v0 + v1) / 2];
 
-                dst[0^1] = clamp_dac(y_lut[y0] + u_val);
-                dst[1^1] = clamp_dac(y_lut[y0] + v_val);
-                dst[2^1] = clamp_dac(y_lut[y1] - u_val);
-                dst[3^1] = clamp_dac(y_lut[y1] - v_val);
+                dst[0] = clamp_dac(y_lut[y0] - u_val);
+                dst[1] = clamp_dac(y_lut[y0] + v_val);
+                dst[2] = clamp_dac(y_lut[y1] + u_val);
+                dst[3] = clamp_dac(y_lut[y1] - v_val);
 
                 dst += 4;
                 src += 6;
@@ -580,10 +580,10 @@ void perf(){};
                 uint8_t v = src[3];
                 int16_t u_val = uv_lut[u];
                 int16_t v_val = uv_lut[v];
-                dst[0^1] = clamp_dac(y_lut[y0] + u_val);
-                dst[1^1] = clamp_dac(y_lut[y0] + v_val);
-                dst[2^1] = clamp_dac(y_lut[y1] - u_val);
-                dst[3^1] = clamp_dac(y_lut[y1] - v_val);
+                dst[0] = clamp_dac(y_lut[y0] - u_val);
+                dst[1] = clamp_dac(y_lut[y0] + v_val);
+                dst[2] = clamp_dac(y_lut[y1] + u_val);
+                dst[3] = clamp_dac(y_lut[y1] - v_val);
 
                 dst += 4;
                 src += 4;
@@ -594,10 +594,10 @@ void perf(){};
                 uint16_t ly0 = y_lut[src[0]];
                 uint16_t ly1 = y_lut[src[1]];
 
-                dst[0^1] = ly0;
-                dst[1^1] = ly0;
-                dst[2^1] = ly1;
-                dst[3^1] = ly1;
+                dst[0] = ly0;
+                dst[1] = ly0;
+                dst[2] = ly1;
+                dst[3] = ly1;
 
                 dst += 4;
                 src += 2;
