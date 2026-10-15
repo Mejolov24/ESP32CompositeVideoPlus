@@ -18,12 +18,14 @@ class CompositeGraphics
     bool hasBackColor = 0;
     Font<CompositeGraphics> *font = nullptr;
     CompositeVideoBuffer* frame_buffer = nullptr;
+    SubSampling_t subsampling_mode;
     public:
 
-    void set_buffer(CompositeVideoBuffer render_buffer){
+    void set_buffer(CompositeVideoBuffer& render_buffer){
         VideoMode_t video_mode = render_buffer.getVideoMode();
-        yres = video_mode.width;
-        xres = video_mode.height;
+        subsampling_mode = video_mode.color_mode;
+        xres = video_mode.width;
+        yres = video_mode.height;
         frame_buffer = &render_buffer;
     }
 
@@ -89,30 +91,36 @@ class CompositeGraphics
 
     inline void dotFast(int x, int y, Color color)
 {
-	uint8_t* line = CompositeVideoBlitter::frame_buffer->lines[y];
+	
+    uint8_t* line = frame_buffer->lines[y];
 
-	#if VIDEO_SUBSAMPLING == SUBSAMPLING_422
+        switch(subsampling_mode){
+        case SubSampling_t::SUBSAMPLING_444:{
+            size_t index = x * 3;
 
-		uint16_t evenX = x & ~1;
-		size_t block_index = evenX * 2;
+            line[index + 0] = color.y;
+            line[index + 1] = color.u;
+            line[index + 2] = color.v;
+            break;
+        }
 
-		line[block_index + (x & 1)] = color.y;
-		line[block_index + 2] = color.u;
-		line[block_index + 3] = color.v;
+        case SubSampling_t::SUBSAMPLING_422:{
 
-	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_400
+            uint16_t evenX = x & ~1;
+            size_t block_index = evenX * 2;
 
-		line[x] = color.y;
-
-	#elif VIDEO_SUBSAMPLING == SUBSAMPLING_444
-
-		size_t index = x * 3;
-
-		line[index + 0] = color.y;
-		line[index + 1] = color.u;
-		line[index + 2] = color.v;
-
-	#endif
+            line[block_index + (x & 1)] = color.y;
+            line[block_index + 2] = color.u;
+            line[block_index + 3] = color.v;
+            break;
+        }
+        case SubSampling_t::SUBSAMPLING_400:{
+            line[x] = color.y;
+            break;
+        }
+        default :
+            break;
+    }
 }
 
     inline void dot(int x, int y, Color color)

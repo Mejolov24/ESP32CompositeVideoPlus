@@ -354,10 +354,9 @@ static int usec(float us)
 void ntsc_init();
 void pal_init();
 
-inline uint16_t IRAM_ATTR clamp_dac(int32_t val) {
-    if (val < (int32_t)BLANKING_LEVEL) return (uint16_t)BLANKING_LEVEL;
-    if (val > (int32_t)MAX_DAC_1V)     return (uint16_t)MAX_DAC_1V;
-    return (uint16_t)val;
+static inline uint16_t IRAM_ATTR clamp_dac(int32_t val) {
+	val = (val < BLANKING_LEVEL) ? BLANKING_LEVEL : val;
+	return (val > MAX_DAC_1V) ? MAX_DAC_1V : val;
 }
 
 static void init_yuv_luts(){
@@ -618,7 +617,7 @@ void perf(){};
             case 4:
                 // 4 samples per color clock
                 for (i = _hsync; i < _hsync + (4*10); i += 4) {
-                    if(_video_mode.color_mode == SubSampling_t::SUBSAMPLING_444){
+                    if(_video_mode.color_mode == SubSampling_t::SUBSAMPLING_444 or _video_mode.color_mode == SubSampling_t::SUBSAMPLING_422){
                         line[i+1] = BLANKING_LEVEL;
                         line[i+0] = BLANKING_LEVEL + BLANKING_LEVEL/2;
                         line[i+3] = BLANKING_LEVEL;
