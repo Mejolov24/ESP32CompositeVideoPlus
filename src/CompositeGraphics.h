@@ -190,7 +190,7 @@ class CompositeGraphics
             }
         } else {
             if (dy >= 0) { x = x1; y = y1; ye = y2; }
-            else         { x = x2; y = y2; ye = x1; }
+            else         { x = x2; y = y2; ye = y1; }
             dot(x, y, color);
             for (int i = 0; y < ye; i++) {
                 y++;
@@ -224,4 +224,42 @@ class CompositeGraphics
         fillRect(x, y + h - 1, w, 1, color);
         fillRect(x + w - 1, y, 1, h, color);
     }
+void fillRectGradient(int x, int y, int w, int h,
+	Color color1, Color color2, bool horizontal = true)
+{
+	if (w <= 0 || h <= 0) return;
+
+	int start = horizontal ? x : y;
+	int length = horizontal ? w : h;
+
+	int x0 = x;
+	int y0 = y;
+	int x1 = x + w;
+	int y1 = y + h;
+
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > xres) x1 = xres;
+	if (y1 > yres) y1 = yres;
+
+	if (x0 >= x1 || y0 >= y1) return;
+
+	int dy = (int)color2.y - color1.y;
+	int du = (int)color2.u - color1.u;
+	int dv = (int)color2.v - color1.v;
+
+	for (int j = y0; j < y1; j++) {
+		for (int i = x0; i < x1; i++) {
+			int pos = (horizontal ? i : j) - start;
+
+			Color c = {
+				(uint8_t)((int)color1.y + dy * pos / (length > 1 ? length - 1 : 1)),
+				(uint8_t)((int)color1.u + du * pos / (length > 1 ? length - 1 : 1)),
+				(uint8_t)((int)color1.v + dv * pos / (length > 1 ? length - 1 : 1))
+			};
+
+			dotFast(i, j, c);
+		}
+	}
+}
 };

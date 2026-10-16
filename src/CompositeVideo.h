@@ -125,13 +125,16 @@ class CompositeVideoBuffer{
         return video_mode;
     }
 
-    ~CompositeVideoBuffer(){
+    void deinit(){
         if (lines) {
             for (uint32_t y = 0; y < video_mode.height; y++)
                 if (lines[y]) heap_caps_free(lines[y]);
             heap_caps_free(lines);
             lines = nullptr;
         }
+    }
+    ~CompositeVideoBuffer(){
+        deinit();
     }
 };
 
