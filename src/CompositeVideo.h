@@ -146,7 +146,7 @@ CompositeVideoBuffer* frame_buffer = nullptr;
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
-inline void set_pixel(uint16_t x, uint16_t y, Color color)
+inline void set_pixel(uint16_t x, uint16_t y, CompositeColor color)
 {
 	uint8_t* line = frame_buffer->lines[y];
     switch (_video_mode.color_mode){
@@ -175,7 +175,7 @@ inline void set_pixel(uint16_t x, uint16_t y, Color color)
     }
 }
 
-void frame_clear(Color color)
+void frame_clear(CompositeColor color)
 {
 	for (uint32_t y = 0; y < _video_mode.height; y++) {
         for (uint32_t x = 0; x < _video_mode.width; x++){set_pixel(x,y,color);}
@@ -383,7 +383,7 @@ void setup_video(CompositeVideoBuffer& render_buffer){
         ntsc_init();
     }
 
-	frame_clear(Color());
+	frame_clear(CompositeColor());
 	video_init_hw(_video_mode.line_width, _samples_per_cc);
 }
 

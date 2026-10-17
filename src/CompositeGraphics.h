@@ -13,13 +13,14 @@ class CompositeGraphics
     uint16_t yres = 0;
     private:
     
-    Color frontColor;
-    Color backColor;
+    CompositeColor frontColor;
+    CompositeColor backColor;
     bool hasBackColor = 0;
     Font<CompositeGraphics> *font = nullptr;
     CompositeVideoBuffer* frame_buffer = nullptr;
     SubSampling_t subsampling_mode;
     public:
+
 
     void set_buffer(CompositeVideoBuffer& render_buffer){
         VideoMode_t video_mode = render_buffer.getVideoMode();
@@ -29,7 +30,7 @@ class CompositeGraphics
         frame_buffer = &render_buffer;
     }
 
-    void setTextColor(Color front, Color back = Color{0, 0, 0})
+    void setTextColor(CompositeColor front, CompositeColor back = CompositeColor{0, 0, 0})
     {
         frontColor = front;
         backColor = back;
@@ -83,13 +84,13 @@ class CompositeGraphics
         print(&temp[i + 1],transparent_bg);
     }
 
-    inline void clear(Color clearColor = Color{0, 128, 128})
+    inline void clear(CompositeColor clearColor = CompositeColor{0, 128, 128})
 {
 	CompositeVideoBlitter::frame_clear(clearColor);
 
 }
 
-    inline void dotFast(int x, int y, Color color)
+    inline void dotFast(int x, int y, CompositeColor color)
 {
 	
     uint8_t* line = frame_buffer->lines[y];
@@ -123,13 +124,13 @@ class CompositeGraphics
     }
 }
 
-    inline void dot(int x, int y, Color color)
+    inline void dot(int x, int y, CompositeColor color)
     {
         if ((unsigned int)x < (unsigned int)xres && (unsigned int)y < (unsigned int)yres)
             dotFast(x, y, color);
     }
 
-    inline void xLine(int x0, int x1, int y, Color color)
+    inline void xLine(int x0, int x1, int y, CompositeColor color)
     {
         if (x0 > x1) { int xb = x0; x0 = x1; x1 = xb; }
         if (x0 < 0) x0 = 0;
@@ -138,7 +139,7 @@ class CompositeGraphics
             dotFast(x, y, color);
     }
 
-    void triangle(short *v0, short *v1, short *v2, Color color)
+    void triangle(short *v0, short *v1, short *v2, CompositeColor color)
     {
         short *v[3] = {v0, v1, v2};
         if (v[1][1] < v[0][1]) { short *vb = v[0]; v[0] = v[1]; v[1] = vb; }
@@ -167,7 +168,7 @@ class CompositeGraphics
         }
     }
 
-    void line(int x1, int y1, int x2, int y2, Color color)
+    void line(int x1, int y1, int x2, int y2, CompositeColor color)
     {
         int x, y, xe, ye;
         int dx = x2 - x1, dy = y2 - y1;
@@ -205,7 +206,7 @@ class CompositeGraphics
         }
     }
 
-    void fillRect(int x, int y, int w, int h, Color color)
+    void fillRect(int x, int y, int w, int h, CompositeColor color)
     {
         if (x < 0) { w += x; x = 0; }
         if (y < 0) { h += y; y = 0; }
@@ -217,7 +218,7 @@ class CompositeGraphics
                 dotFast(i, j, color);
     }
 
-    void rect(int x, int y, int w, int h, Color color)
+    void rect(int x, int y, int w, int h, CompositeColor color)
     {
         fillRect(x, y, w, 1, color);
         fillRect(x, y, 1, h, color);
@@ -225,7 +226,7 @@ class CompositeGraphics
         fillRect(x + w - 1, y, 1, h, color);
     }
 void fillRectGradient(int x, int y, int w, int h,
-	Color color1, Color color2, bool horizontal = true)
+	CompositeColor color1, CompositeColor color2, bool horizontal = true)
 {
 	if (w <= 0 || h <= 0) return;
 
@@ -252,7 +253,7 @@ void fillRectGradient(int x, int y, int w, int h,
 		for (int i = x0; i < x1; i++) {
 			int pos = (horizontal ? i : j) - start;
 
-			Color c = {
+			CompositeColor c = {
 				(uint8_t)((int)color1.y + dy * pos / (length > 1 ? length - 1 : 1)),
 				(uint8_t)((int)color1.u + du * pos / (length > 1 ? length - 1 : 1)),
 				(uint8_t)((int)color1.v + dv * pos / (length > 1 ? length - 1 : 1))

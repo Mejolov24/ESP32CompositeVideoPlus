@@ -4,23 +4,23 @@
     #include <algorithm>
 
 
-struct Color {
+struct CompositeColor {
     uint8_t y; // Luma: 0 to 255
     uint8_t u; // Chroma (B-Y): 0 to 255 (128 = neutral/no color)
     uint8_t v; // Chroma (R-Y): 0 to 255 (128 = neutral/no color)
 
     // Default constructor (Black)
     
-    Color() : y(0), u(128), v(128) {}
+    CompositeColor() : y(0), u(128), v(128) {}
 
     // Direct YUV constructor
-    Color(uint32_t raw)
+    CompositeColor(uint32_t raw)
 	: y((raw >> 16) & 0xFF),
 	  u((raw >> 8) & 0xFF),
 	  v(raw & 0xFF) {}
-    Color(uint8_t _y, uint8_t _u, uint8_t _v) : y(_y), u(_u), v(_v) {}
+    CompositeColor(uint8_t _y, uint8_t _u, uint8_t _v) : y(_y), u(_u), v(_v) {}
 
-    static Color fromRGB(uint8_t r, uint8_t g, uint8_t b){
+    static CompositeColor fromRGB(uint8_t r, uint8_t g, uint8_t b){
         float y = 0.299f * r + 0.587f * g + 0.114f * b;
         // Normalize RGB to [0, 1].
         float R = r / 255.0f;
@@ -39,10 +39,10 @@ struct Color {
             return (uint8_t)(value + 0.5f);
         };
 
-        return Color(clamp(y), clamp(u), clamp(v));
+        return CompositeColor(clamp(y), clamp(u), clamp(v));
     }
 
-static Color fromRGBFast(uint8_t r, uint8_t g, uint8_t b)
+static CompositeColor fromRGBFast(uint8_t r, uint8_t g, uint8_t b)
 {
 	int32_t y = (299 * r + 587 * g + 114 * b + 500) / 1000;
 
@@ -57,7 +57,20 @@ static Color fromRGBFast(uint8_t r, uint8_t g, uint8_t b)
 		return (uint8_t)value;
 	};
 
-	return Color(clamp(y), clamp(u), clamp(v));
+	return CompositeColor(clamp(y), clamp(u), clamp(v));
+}
+static CompositeColor fromRGBFast565(uint16_t rgb)
+{
+	uint8_t r5 = (rgb >> 11) & 0x1F;
+	uint8_t g6 = (rgb >> 5) & 0x3F;
+	uint8_t b5 = rgb & 0x1F;
+
+	// Expand RGB565 components to 8-bit RGB.
+	uint8_t r = (r5 << 3) | (r5 >> 2);
+	uint8_t g = (g6 << 2) | (g6 >> 4);
+	uint8_t b = (b5 << 3) | (b5 >> 2);
+
+	return fromRGBFast(r, g, b);
 }
 
 };

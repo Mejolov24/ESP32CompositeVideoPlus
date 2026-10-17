@@ -15,7 +15,7 @@ class Font
   {
   }
 
-  void drawChar(Graphics &g, int x, int y, char ch, Color frontColor, Color backColor, bool transparent = true)
+  void drawChar(Graphics &g, int x, int y, char ch, CompositeColor frontColor, CompositeColor backColor, bool transparent = true)
   {
     const unsigned char *pix = &pixels[xres * yres * (ch - 32)];
     for(int py = 0; py < yres; py++)

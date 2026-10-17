@@ -120,8 +120,8 @@ void test_grayscale_picker(uint8_t Y){
     uint16_t y = 0;
 
 
-    Color color_bottom = Color(0, 128, 128);
-    Color color_top = Color(255, 128, 128);
+    CompositeColor color_bottom = CompositeColor(0, 128, 128);
+    CompositeColor color_top = CompositeColor(255, 128, 128);
 
     graphics.fillRectGradient(x,y,w,h,color_bottom,color_top,false);
 
@@ -131,13 +131,13 @@ void test_grayscale_picker(uint8_t Y){
     
     uint16_t x2 = x - x2_size - y2_size;
     uint16_t y2 = map(Y,0,255,0,yres - y2_size);
-    graphics.fillRect(x2,y2,x2_size,y2_size,Color(255,128,128));
+    graphics.fillRect(x2,y2,x2_size,y2_size,CompositeColor(255,128,128));
 
     short v0[] = {x2 + x2_size, y2 - y2_size};
     short v1[] = {x2 + x2_size, y2 + (y2_size*2)};
     short v2[] = {x2 + x2_size + y2_size, y2 + (y2_size/2)};
 
-    graphics.triangle(v0, v1, v2, Color(255, 128, 128));
+    graphics.triangle(v0, v1, v2, CompositeColor(255, 128, 128));
     char buffer[128];
     sprintf(buffer, "Y = %u", Y);
     graphics.setCursor((xres / 2), 16);
@@ -164,7 +164,7 @@ void test_rainbow_wheel(uint8_t Y)
 		int x1 = x + radius * cosf(theta);
 		int y1 = y + radius * sinf(theta);
 
-		Color color = Color(Y, 128 + chroma * cosf(theta), 128 + chroma * sinf(theta) );
+		CompositeColor color = CompositeColor(Y, 128 + chroma * cosf(theta), 128 + chroma * sinf(theta) );
 
 		int x2 = x + (radius + 1) * cosf(theta);
 		int y2 = y + (radius + 1) * sinf(theta);
@@ -250,6 +250,7 @@ void test() {
 
 
 void setup(){
+    delay(500);
     esp_pm_lock_handle_t powerManagementLock;
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "compositeCorePerformanceLock", &powerManagementLock);
     esp_pm_lock_acquire(powerManagementLock);
@@ -257,7 +258,7 @@ void setup(){
     resolution_set(resolution);
 
     graphics.setFont(font);
-    graphics.setTextColor(Color::fromRGB(255,255,255));
+    graphics.setTextColor(CompositeColor::fromRGB(255,255,255));
     audio.begin(27, 8000, 0, 100000);
     // i dont recommend pin 26 since its next to the video pin and generates noise
     // but i do it since i already soldered it ;-;
