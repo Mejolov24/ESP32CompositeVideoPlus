@@ -5,6 +5,9 @@
     #include <JetConfig.hpp>
     #include <CompositeVideo.h>
 
+#ifndef RENDER_DIVIDER
+    #define RENDER_DIVIDER 8
+#endif
 
 enum class Memory_t{
     INTERNAL,
@@ -101,8 +104,7 @@ class JetDriver{
         return new Scene(buffer.frame_buffer, buffer.z_buffer, buffer.width, buffer.height);
     }
 
-    void render(Scene& scene, JetBuffer& buffer){
-        scene.render();
+    void render(JetBuffer& buffer){
 
         for (int y = 0; y < buffer.height; y++){
             const uint16_t* src;
@@ -118,7 +120,7 @@ class JetDriver{
             for (int x = 0; x < buffer.width; x++)
             {
                 const uint16_t rgb = src[x >> 1];
-                CompositeVideoBlitter::set_pixel(x,y,CompositeColor::fromRGBFast565(rgb));
+                CompositeVideoBlitter::set_pixel(x,y,rgb565_lut[rgb]);
             }
         #else
                 src = buffer.frame_buffer + physRow * buffer.width;
@@ -126,11 +128,50 @@ class JetDriver{
                 for (int x = 0; x < buffer.width; x++)
                 {
                     const uint16_t rgb = src[x];
-                    CompositeVideoBlitter::set_pixel(x,y,CompositeColor::fromRGBFast565(rgb));
+                    CompositeVideoBlitter::set_pixel(x,y,rgb565_lut[rgb]);
                 }
         #endif
         }
     }
+
+int current_line = 0;
+
+void renderScanline(JetBuffer& buffer){
+        if(current_line >= buffer.height){
+            current_line = 0;
+        }
+        int target_line = current_line + (buffer.height / RENDER_DIVIDER);
+        if (target_line > buffer.height) target_line = buffer.height;
+
+
+        for (current_line; current_line < target_line; current_line++){
+            const uint16_t* src;
+
+        #if FIELD_BUFFERS
+                const int physRow = current_line >> 1;
+        #else
+                const int physRow = current_line;
+        #endif
+
+        #if HALF_WIDTH_BUFFERS
+            src = buffer.frame_buffer + physRow * (buffer.width / 2);
+            for (int x = 0; x < buffer.width; x++)
+            {
+                const uint16_t rgb = src[x >> 1];
+                CompositeVideoBlitter::set_pixel(x,current_line,rgb565_lut[rgb]);
+            }
+        #else
+                src = buffer.frame_buffer + physRow * buffer.width;
+
+                for (int x = 0; x < buffer.width; x++)
+                {
+                    const uint16_t rgb = src[x];
+                    CompositeVideoBlitter::set_pixel(x,current_line,rgb565_lut[rgb]);
+                }
+        #endif
+        }
+}
+
 };
 
 #endif

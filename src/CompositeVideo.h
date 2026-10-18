@@ -699,6 +699,11 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
     }
 #endif
 
+int get_current_scanline()
+{
+    return _line_counter;
+}
+
 // Workhorse ISR handles audio and video updates
 extern "C"
 void IRAM_ATTR video_isr(volatile void* vbuf)

@@ -19,12 +19,44 @@ CompositeGraphics graphics;
 
 // Jet Stuff
 JetBuffer scene_buffer;
-Scene scene;
+Scene* scene = nullptr;
 JetDriver jet;
 unsigned long lastFrameTime = 0;
 
+TaskHandle_t jetTaskHandle = nullptr;
+
+void scanline_render_test()
+{
+	const int lead = 8;
+
+	int scanline =
+		CompositeVideoBlitter::get_current_scanline();
+
+	scanline = (scanline + lead) % graphics.yres;
+
+	graphics.dot(
+		graphics.xres / 2,
+		scanline,
+		CompositeColor::fromRGBFast(0, 255, 0)
+	);
+}
+
+void jetRenderTask(void* parameter)
+{
+	uint32_t batches = 0;
+
+	while (true) {
+		jet.renderScanline(scene_buffer);
+
+		if (++batches >= 100) {
+			batches = 0;
+			vTaskDelay(1);
+		}
+	}
+}
 
 void setup(){
+    Serial.begin(115200);
     esp_pm_lock_handle_t powerManagementLock;
     esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "compositeCorePerformanceLock", &powerManagementLock);
     esp_pm_lock_acquire(powerManagementLock);
@@ -39,14 +71,24 @@ void setup(){
     graphics.setTextColor(CompositeColor::fromRGB(255,255,255));
 
     // setup Jet
-    scene_buffer.init(336,240,Memory_t::PREFER_INTERNAL,Memory_t::PREFER_INTERNAL);
+    scene_buffer.init(336,240,Memory_t::PREFER_SPIRAM,Memory_t::PREFER_SPIRAM);
     scene = jet.create_scene(scene_buffer);
-    Cube::init(scene);
+    Cube::init(*scene);
+    xTaskCreatePinnedToCore(
+        jetRenderTask,
+        "JetRender",
+        8192,
+        nullptr,
+        1,
+        &jetTaskHandle,
+        0
+    );
 }
+
+
 
 void loop()
 {
-    CompositeVideoBlitter::video_sync();
 
 	const unsigned long now = millis();
 
@@ -54,5 +96,5 @@ void loop()
 	lastFrameTime = now;
 
     Cube::update(delta_time);
-    jet.render(scene, scene_buffer);
+    scene->render();
 }
