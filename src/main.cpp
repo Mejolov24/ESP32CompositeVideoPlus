@@ -3,11 +3,18 @@
 #include <CompositeGraphics.h>
 #include <CompositeColor.h>
 #include <AudioPWM.h>
-#include "esp_pm.h"
 #include <Jet.hpp>
 #include <JetDriver.h>
 #include "font6x8.h"
 #include <Cube.hpp>
+#include <output.h>
+
+#include "esp_heap_caps.h"
+#include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_pm.h"
+#include "esp_efuse.h"
+
 Font<CompositeGraphics> font(6, 8, font6x8::pixels);
 AudioPWM audio;
 
@@ -42,85 +49,6 @@ unsigned long lastFrameTime = 0;
 TaskHandle_t jetTaskHandle = nullptr;
 TaskHandle_t ArduinoloopTaskHandle = nullptr;
 
-void _tone(uint16_t hz, uint16_t time) {
-	if (hz == 0 || time == 0) {
-		tone_state.active = false;
-		return;
-	}
-
-	tone_state.hz = hz;
-	tone_state.samples_remaining =
-		((uint32_t)AUDIO_SAMPLE_RATE * time) / 1000;
-
-	tone_state.active = true;
-}
-
-void tone_update() {
-	if (!tone_state.active) return;
-
-	int16_t samples[TONE_CHUNK_SIZE];
-	uint32_t queued = audio.available();
-
-	// Keep some room in the ring buffer.
-	if (queued >= 1024 - TONE_CHUNK_SIZE) return;
-
-	uint32_t count = tone_state.samples_remaining;
-	if (count > TONE_CHUNK_SIZE) count = TONE_CHUNK_SIZE;
-
-	for (uint32_t i = 0; i < count; i++) {
-		samples[i] = (int16_t)(32767.0f * sinf(phase));
-
-		phase += 2.0f * M_PI * tone_state.hz / AUDIO_SAMPLE_RATE;
-		if (phase >= 2.0f * M_PI) {
-			phase -= 2.0f * M_PI;
-		}
-	}
-
-	audio.fill_buffer(samples, count);
-	tone_state.samples_remaining -= count;
-
-	if (tone_state.samples_remaining == 0) {
-		tone_state.active = false;
-	}
-}
-
-void toneBlocking(uint16_t hz, uint16_t time)
-{
-	if (hz == 0 || time == 0)
-		return;
-
-	int16_t samples[TONE_CHUNK_SIZE];
-	uint32_t samples_remaining =
-		((uint32_t)AUDIO_SAMPLE_RATE * time) / 1000;
-
-	const float phase_step = 2.0f * PI * hz / AUDIO_SAMPLE_RATE;
-
-	while (samples_remaining > 0) {
-		if (audio.available() >= 1024 - TONE_CHUNK_SIZE) {
-			delay(1);
-			continue;
-		}
-
-		uint32_t count = samples_remaining;
-		if (count > TONE_CHUNK_SIZE)
-			count = TONE_CHUNK_SIZE;
-
-		for (uint32_t i = 0; i < count; i++) {
-			samples[i] = (int16_t)(32767.0f * sinf(phase));
-
-			phase += phase_step;
-			if (phase >= 2.0f * PI)
-				phase -= 2.0f * PI;
-		}
-
-		audio.fill_buffer(samples, count);
-		samples_remaining -= count;
-	}
-
-	// Wait for the queued audio to finish playing.
-	while (audio.available() > 0)
-		delay(1);
-}
 
 void test_grayscale_picker(uint8_t Y){
     // bar render
@@ -183,10 +111,48 @@ void test_rainbow_wheel(uint8_t Y)
 
 		graphics.line(x, y, x1, y1, color);
 		graphics.line(x, y, x2, y2, color);
-        tone_update();
 	}
-    tone_update();
 }
+
+void rainbow()
+{
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+
+    for (uint16_t x = 0; x < xres; x++) {
+        float angle = ((float)x / (float)xres) * 2.0f * M_PI;
+        
+        float base_u = cosf(angle);
+        float base_v = sinf(angle);
+
+        for (uint16_t y = 0; y < yres; y++) {
+            float brightness_factor = 1.0f - ((float)y / (float)yres);
+            brightness_factor = brightness_factor * brightness_factor;
+            uint8_t luma = (uint8_t)(brightness_factor * 255.0f);
+            float saturation = 127.0f * brightness_factor;
+            uint8_t u = (uint8_t)(128.0f + saturation * base_u);
+            uint8_t v = (uint8_t)(128.0f + saturation * base_v);
+
+            graphics.dotFast(x, y, {luma, u, v});
+        }
+    }
+}
+
+void color_space()
+{
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+    //round((255.0 * (volume / 100.0))))
+    for (uint16_t x = 0; x < xres; x++) {
+        uint8_t U = map(x, 0, xres, 0, 255);
+
+        for (uint16_t y = 0; y < yres; y++) {
+            uint8_t V = map(y, 0, yres, 0, 255);
+            graphics.dotFast(x, y, {0, U, V});
+        }
+    }
+}
+
 static constexpr CompositeColor firePalette[37] = {
 	{0, 128, 128},
 	{15, 178, 161},
@@ -338,9 +304,6 @@ void subdivide()
 
             if (rect.w <= 2 || rect.h <= 2)
                 continue;
-            current_tone = ((rect.x * rect.y) % 800) + 200;
-            _tone(current_tone,100);
-            tone_update();
             CompositeColor color = CompositeColor(
                 fast_random() & 0xFF,
                 fast_random() & 0xFF,
@@ -387,8 +350,83 @@ void subdivide()
     }
 }
 
+template<typename... Args>
+void print_tab_data(const char* name, Args... args) {
+    graphics.print(name);
+    (graphics.print(args), ...);   // fold expression, C++17
+    graphics.print("\n");
+}
+
+
+const char* chip_model_name(esp_chip_model_t model) {
+    switch (model) {
+        case CHIP_ESP32:    return "ESP32";
+        case CHIP_ESP32S2:  return "ESP32-S2";
+        case CHIP_ESP32S3:  return "ESP32-S3";
+        case CHIP_ESP32C3:  return "ESP32-C3";
+        case CHIP_ESP32H2:  return "ESP32-H2";
+        default:            return "Unknown";
+    }
+}
+
+const char* ram_name(Memory_t ram) {
+    switch (ram) {
+        case Memory_t::SPIRAM : return "(DRAM) ";
+        case Memory_t::INTERNAL : return "(SRAM) ";
+        default:            return "(Unknown) ";
+    }
+}
+
+void DEVICE_INFO(){
+
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+
+    // --- Chip info ---
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+
+    esp_chip_model_t model = chip_info.model;
+    uint32_t cores = chip_info.cores;
+    uint32_t revision = chip_info.revision;
+
+    uint32_t flash_size = spi_flash_get_chip_size();
+
+    size_t psram_size = 0;
+    if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0) {
+        psram_size = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    }
+
+    // --- Heap / SRAM / DRAM ---
+    size_t total_internal   = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
+    size_t total_psram      = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+
+    // --- Runtime info ---
+    uint32_t free_rtos_heap = xPortGetFreeHeapSize();
+
+    graphics.setCursor((xres/2 - 32), 16);
+    graphics.print("DEVICE INFO");
+    graphics.setCursor((xres/2 - 32), 32);
+
+    print_tab_data("Model : ", chip_model_name(chip_info.model));  // string overload
+    print_tab_data("Cores : ", cores);
+    print_tab_data("Revision : ", revision);
+    print_tab_data("Flash : ", flash_size / 1024, " KB");
+    print_tab_data("SRAM : ", total_internal / 1024, " KB");
+    print_tab_data("PSRAM : ", total_psram / 1024, " KB");
+    print_tab_data("FreeRTOS heap : ", free_rtos_heap / 1024, " KB");
+}
+
 void RAM_INFO(){
-    
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+    graphics.setCursor(xres/2 - 16, 16);
+    graphics.print("RAM INFO");
+    graphics.setCursor(xres/2 - 64, 32);
+    print_tab_data("VRAM 0 (Scanout) ", ram_name(scanout_buffer.memory_type), scanout_buffer.total_buffer_size / 1024, " KB");
+    //print_tab_data("VRAM 1 (Buffering) ", ram_name(scanout_buffer.memory_type), scanout_buffer.total_buffer_size / 1024, " KB");
+    print_tab_data("VRAM 3D 0 (FRAME) ", ram_name(scene_buffer.frame_memory_type), scene_buffer.frame_buffer_size / 1024, " KB");
+    print_tab_data("VRAM 3D 1 (Z) ", ram_name(scene_buffer.z_memory_type), scene_buffer.z_buffer_size / 1024, " KB");
 }
 
 void jetRenderTask(void* parameter)
@@ -403,8 +441,7 @@ void jetRenderTask(void* parameter)
         graphics.print("FPS: ");
         graphics.print(fps);
 
-
-		// Tell loop() that the source framebuffer can be reused.
+		// Tell loop that the source framebuffer can be reused.
 		xTaskNotifyGive(ArduinoloopTaskHandle);
 	}
 }
@@ -436,10 +473,18 @@ void resolution_set(VideoResolution_t res){
     
     scanout_buffer.deinit();
 
-    scanout_buffer.init(res, subsampling);
+    scanout_buffer.init(res, subsampling,Memory_t::PREFER_INTERNAL);
     graphics.set_buffer(scanout_buffer);
 
     CompositeVideoBlitter::setup_video(scanout_buffer);
+}
+
+void display_test_name(const char *str){
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+    graphics.setCursor((xres / 2) - 32, (yres/2));
+    graphics.print(str);
+    delay(1000);
 }
 
 void test() {
@@ -448,24 +493,20 @@ void test() {
     uint16_t xres = graphics.xres;
     uint16_t yres = graphics.yres;
     float hz = 440.0f * powf(2.0f, ((res + 72) - 69) / 12.0f);
-        switch (res)
-        {
+        switch (res){
         case 0:
-            graphics.setCursor((xres / 2) - 32, (yres/2));
-            graphics.print("NTSC_256x240P");
-            toneBlocking(hz,1500);
+            display_test_name("NTSC_256x240P");
+            delay(1000);
             resolution_set(VideoResolution_t::VIDEO_RES_NTSC_256x240P);
             break;
         case 1:
-            graphics.setCursor((xres / 2) - 32, (yres/2));
-            graphics.print("NTSC_320x240P");
-            toneBlocking(hz,1500);
+            display_test_name("NTSC_320x240P");
+            delay(1000);
             resolution_set(VideoResolution_t::VIDEO_RES_NTSC_320x240P);
             break;
         case 2:
-            graphics.setCursor((xres / 2) - 32, (yres/2));
-            graphics.print("NTSC_336x240P");
-            toneBlocking(hz,1500);
+            display_test_name("NTSC_336x240P");
+            delay(1000);
             resolution_set(VideoResolution_t::VIDEO_RES_NTSC_336x240P);
             break;
         
@@ -473,29 +514,28 @@ void test() {
             break;
         }
 
-
         graphics.clear();
         delay(100);
-
+        RAM_INFO();
+        delay(5000);
+        graphics.clear();
+        display_test_name("Color wheel");
         for (uint16_t note = 69; note <= 81; note++) {
-            float hz = 440.0f * powf(2.0f, (note - 69) / 12.0f);
-            _tone(hz, 800);
 
             uint8_t Y = map(note, 69, 81, 0, 255);
             test_grayscale_picker(Y);
             test_rainbow_wheel(Y);
             graphics.clear();
         }
+        display_test_name("Subdivide");
         subdivide();
         graphics.clear();
+        display_test_name("Fire");
         fire_test(res);
         graphics.clear();
-        graphics.setCursor((xres / 2) - 32, (yres/2));
-        graphics.print("JET ENGINE");
-        toneBlocking(hz,1500);
+        display_test_name("JET ENGINE");
         test_jet();
         graphics.clear();
-
     }
 
 }
@@ -530,7 +570,10 @@ void setup(){
     // i dont recommend pin 26 since its next to the video pin and generates noise
     // but i do it since i already soldered it ;-;
     fire_pixels = (uint8_t*)heap_caps_malloc(336*240,MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    audio.set_buffer(output_song,output_song_len);
 
+    DEVICE_INFO();
+    delay(10000);
 	
 }
 float current_offset = 0.0f;

@@ -2,20 +2,18 @@
 
 AudioPWM* AudioPWM::instance = nullptr;
 
-AudioPWM::AudioPWM() : read_idx(0), write_idx(0), pwm_channel(0), sample_timer(nullptr) {
+AudioPWM::AudioPWM() : pwm_channel(0), sample_timer(nullptr) {
     instance = this;
 }
 
-void IRAM_ATTR AudioPWM::handleTick() {
-    if (read_idx != write_idx) {
-        int16_t sample = ring_buffer[read_idx];
-        read_idx = (read_idx + 1) % BUFFER_SIZE;
-        
-        uint32_t duty = (sample + 32768) >> 8;
-        ledcWrite(pwm_channel, duty);
-    } else {
-        ledcWrite(pwm_channel, 128); // Silence midpoint
-    }
+void IRAM_ATTR AudioPWM::handleTick(){
+	if (_buffer != nullptr && current_index < buffer_size)
+	{
+		int8_t sample = _buffer[current_index++];
+		uint32_t duty = static_cast<uint8_t>(sample) ^ 0x80;
+		ledcWrite(pwm_channel, duty);
+	}
+	else{ledcWrite(pwm_channel, 128);}
 }
 
 void IRAM_ATTR AudioPWM::onTimerTick() {
@@ -40,30 +38,11 @@ void AudioPWM::begin(uint8_t pin, int sample_rate, uint8_t channel, uint32_t pwm
 }
 
 uint32_t AudioPWM::available() {
-    if(write_idx >= read_idx){return write_idx - read_idx;}
-    return BUFFER_SIZE - read_idx + write_idx;
+    return buffer_size - current_index;
 }
 
-void AudioPWM::fill_buffer(const int16_t* buffer, int len) {
-    for (int i = 0; i < len; i++) {
-        uint32_t next_write = (write_idx + 1) % BUFFER_SIZE;
-        if (next_write != read_idx) {
-            ring_buffer[write_idx] = buffer[i];
-            write_idx = next_write;
-        } else {
-            break;
-        }
-    }
-}
-
-void AudioPWM::fill_buffer(const int8_t* buffer, int len) {
-    for (int i = 0; i < len; i++) {
-        uint32_t next_write = (write_idx + 1) % BUFFER_SIZE;
-        if (next_write != read_idx) {
-            ring_buffer[write_idx] = (int16_t)buffer[i] << 8;
-            write_idx = next_write;
-        } else {
-            break;
-        }
-    }
+void AudioPWM::set_buffer(const BUFFER_TYPE* buffer, uint32_t size) {
+    _buffer = buffer;
+    buffer_size = size;
+    current_index = 0;
 }

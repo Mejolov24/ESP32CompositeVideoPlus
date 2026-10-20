@@ -82,31 +82,90 @@ constexpr VideoMode_t _video_modes[] = {
     { VideoResolution_t::VIDEO_RES_PAL_384x288P, 384, 288, true  },
 };
 
+enum class Memory_t{
+    INTERNAL,
+    SPIRAM,
+    PREFER_INTERNAL,
+    PREFER_SPIRAM,
+
+    ZBUFFER_FAILED,
+    FRAMEBUFFER_FAILED,
+    ALL_FAILED,
+    SUCCESFUL
+};
+
 class CompositeVideoBuffer{
     private:
+
+    uint8_t* allocate_line_buffer(uint32_t line_bytes, Memory_t requested, Memory_t& actual) {
+        uint8_t* buffer = nullptr;
+        switch (requested) {
+            case Memory_t::INTERNAL:
+                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                actual = Memory_t::INTERNAL;
+                break;
+            case Memory_t::SPIRAM:
+                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                actual = Memory_t::SPIRAM;
+                break;
+            case Memory_t::PREFER_INTERNAL:
+                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                if (buffer) {
+                    actual = Memory_t::INTERNAL;
+                } else {
+                    buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    actual = Memory_t::SPIRAM;
+                }
+                break;
+            case Memory_t::PREFER_SPIRAM:
+                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                if (buffer) {
+                    actual = Memory_t::SPIRAM;
+                } else {
+                    buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+                    actual = Memory_t::INTERNAL;
+                }
+                break;
+
+            default:
+                break;
+        }
+        return buffer;
+    }
+
     VideoMode_t video_mode;
+
     public:
     uint8_t** lines = nullptr;
+    Memory_t memory_type = Memory_t::ALL_FAILED;
+    uint32_t total_buffer_size = 0;
 
-    bool init(VideoResolution_t resolution, SubSampling_t subsampling){
+    Memory_t init(VideoResolution_t resolution, SubSampling_t subsampling, Memory_t memory_type) {
         video_mode = _video_modes[static_cast<uint8_t>(resolution)];
         uint32_t line_bytes = video_mode.width * SUBSAMPLING_BYTES(subsampling);
+        total_buffer_size = video_mode.height * video_mode.width * sizeof(uint8_t*);
         video_mode.color_mode = subsampling;
 
+        // Pointer array always stays in internal RAM
         lines = (uint8_t**)heap_caps_malloc(video_mode.height * sizeof(uint8_t*), MALLOC_CAP_INTERNAL);
-        if (!lines) return false;
+        if (!lines) {
+            memory_type = Memory_t::ALL_FAILED;
+            return Memory_t::ALL_FAILED;
+        }
 
         for (uint32_t y = 0; y < video_mode.height; y++) {
-            lines[y] = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+            lines[y] = allocate_line_buffer(line_bytes, memory_type, memory_type);
             if (!lines[y]) {
                 for (uint32_t x = 0; x < y; x++) heap_caps_free(lines[x]);
                 heap_caps_free(lines);
                 lines = nullptr;
-                return false;
+                memory_type = Memory_t::ALL_FAILED;
+                return Memory_t::ALL_FAILED;
             }
         }
-        return true;
+        return memory_type;
     }
+
 
     void pushFromBuffer(CompositeVideoBuffer& buffer){
         VideoMode_t source_mode = buffer.getVideoMode();
