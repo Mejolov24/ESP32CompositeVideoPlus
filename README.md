@@ -5,13 +5,17 @@ ESP32 EIA RS-170A Analog video library
 
 This repository is a fork of Marciot's [ESP32CompositeVideoColor](https://github.com/marciot/ESP32CompositeColorVideo) that adds YUV color scheme, chroma subsampling and more color range (~16,777,216 Colors)
 
+## V2 an V3 info
+im working on V2, wich has a better api (Because V1 was put together in like 3 days) and some bugfixes.
+For V3, the framebuffer format will change to be RGB565 in order to support graphics libraries like JET or LVGFX while avoiding the colorspace convertion overhead.
+
 ## Features
  - High color Density
  - Subsampling modes
     - 4:4:4
     - 4:2:2
     - 4:0:0
- - Audio support via PWM (Low pass filter and dc offset removed recommended)
+ - Audio support via PWM (Low pass filter recommended)
 
 ### TODO:
  - [ ] PAL Support
