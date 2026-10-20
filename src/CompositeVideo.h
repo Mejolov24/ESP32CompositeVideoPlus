@@ -146,6 +146,17 @@ CompositeVideoBuffer* frame_buffer = nullptr;
 uint16_t y_lut[256];
 uint16_t uv_lut[256];
 
+    inline void double_dot422(int x, int y, CompositeColor c0, CompositeColor c1)
+    {
+        uint8_t* line = frame_buffer->lines[y];
+        size_t index = (x & ~1) * 2;
+
+        line[index + 0] = c0.y;
+        line[index + 1] = c1.y;
+        line[index + 2] = (c0.u + c1.u) >> 1;
+        line[index + 3] = (c0.v + c1.v) >> 1;
+    }
+
 inline void set_pixel(uint16_t x, uint16_t y, CompositeColor color)
 {
 	uint8_t* line = frame_buffer->lines[y];

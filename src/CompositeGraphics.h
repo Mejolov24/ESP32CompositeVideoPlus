@@ -124,6 +124,11 @@ class CompositeGraphics
     }
 }
 
+    inline void double_dot422(int x, int y, CompositeColor c0, CompositeColor c1)
+    {
+        CompositeVideoBlitter::double_dot422(x,y,c0,c1);
+    }
+
     inline void dot(int x, int y, CompositeColor color)
     {
         if ((unsigned int)x < (unsigned int)xres && (unsigned int)y < (unsigned int)yres)

@@ -34,7 +34,7 @@ class JetBuffer{
         width = xres;
         height = yres;
 
-        #ifdef HALF_WIDTH_BUFFERS
+        #if HALF_WIDTH_BUFFERS
             frame_buffer_size = (xres / 2) * yres * sizeof(uint16_t);
             z_buffer_size = (xres / 2) * yres * sizeof(uint16_t);
         #else
@@ -95,6 +95,11 @@ class JetBuffer{
 
         return Memory_t::SUCCESFUL;
     }
+
+    void deinit(){
+        heap_caps_free(frame_buffer);
+        heap_caps_free(z_buffer);
+    }
     
 };
 
@@ -102,6 +107,9 @@ class JetDriver{
     public:
     Scene* create_scene(JetBuffer& buffer) {
         return new Scene(buffer.frame_buffer, buffer.z_buffer, buffer.width, buffer.height);
+    }
+    void delete_scene(Scene* scene) {
+        delete scene;
     }
 
     void render(JetBuffer& buffer){
@@ -134,9 +142,42 @@ class JetDriver{
         }
     }
 
+
+    void render422(JetBuffer& buffer){
+
+        for (int y = 0; y < buffer.height; y++){
+            const uint16_t* src;
+
+        #if FIELD_BUFFERS
+                const int physRow = y >> 1;
+        #else
+                const int physRow = y;
+        #endif
+
+        #if HALF_WIDTH_BUFFERS
+            src = buffer.frame_buffer + physRow * (buffer.width / 2);
+            for (int x = 0; x < buffer.width; x++){
+				const uint16_t rgb = src[x >> 1];
+				const CompositeColor c = rgb565_lut[rgb];
+
+				CompositeVideoBlitter::double_dot422(x, y, c, c);
+            }
+        #else
+                src = buffer.frame_buffer + physRow * buffer.width;
+
+                for (int x = 0; x < buffer.width; x += 2){
+                    const uint16_t rgb = src[x];
+                    const CompositeColor c0 = rgb565_lut[src[x]];
+                    const CompositeColor c1 = rgb565_lut[src[x + 1]];
+                    CompositeVideoBlitter::double_dot422(x,y,c0,c1);
+                }
+        #endif
+        }
+    }
+
 int current_line = 0;
 
-void renderScanline(JetBuffer& buffer){
+void renderScanlinePacked(JetBuffer& buffer){
         if(current_line >= buffer.height){
             current_line = 0;
         }
@@ -167,6 +208,41 @@ void renderScanline(JetBuffer& buffer){
                 {
                     const uint16_t rgb = src[x];
                     CompositeVideoBlitter::set_pixel(x,current_line,rgb565_lut[rgb]);
+                }
+        #endif
+        }
+}
+void renderScanlineCore(bool core,JetBuffer& buffer)
+{
+	const int half_height = buffer.height / 2;
+
+	int start_line = core ? 0 : half_height;
+	const int target_line = core ? half_height : buffer.height;
+
+
+        for (start_line; start_line < target_line; start_line++){
+            const uint16_t* src;
+
+        #if FIELD_BUFFERS
+                const int physRow = start_line >> 1;
+        #else
+                const int physRow = start_line;
+        #endif
+
+        #if HALF_WIDTH_BUFFERS
+            src = buffer.frame_buffer + physRow * (buffer.width / 2);
+            for (int x = 0; x < buffer.width; x++)
+            {
+                const uint16_t rgb = src[x >> 1];
+                CompositeVideoBlitter::set_pixel(x,start_line,rgb565_lut[rgb]);
+            }
+        #else
+                src = buffer.frame_buffer + physRow * buffer.width;
+
+                for (int x = 0; x < buffer.width; x++)
+                {
+                    const uint16_t rgb = src[x];
+                    CompositeVideoBlitter::set_pixel(x,start_line,rgb565_lut[rgb]);
                 }
         #endif
         }
