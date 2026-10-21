@@ -1,5 +1,5 @@
-#ifndef EASY_HEAP_H
-    #define EASY_HEAP_H
+#ifndef EBUFFER_H
+    #define EBUFFER_H
 #include <Arduino.h>
 
 enum class MemoryStorage_t{
@@ -48,8 +48,9 @@ class EBuffer{
     public:
     MemoryStorage_t memory_storage = MemoryStorage_t::NONE;
     MemoryType_t memory_type = MemoryType_t::MEMORY_DEFAULT;
-    uint16_t* buffer = nullptr;
-    uint8_t* buffer_8 = nullptr;
+    uint16_t* buffer32 = nullptr;
+    uint16_t* buffer16 = nullptr;
+    uint8_t* buffer = nullptr;
     uint32_t buffer_size = 0;
     
     MemoryResult_t init(uint32_t size, MemoryStorage_t storage, MemoryType_t type){
@@ -61,23 +62,23 @@ class EBuffer{
 
         switch (storage){
         case MemoryStorage_t::INTERNAL:
-            buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
+            buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
             break;
         case MemoryStorage_t::SPIRAM:
-            buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
+            buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
             break;
         case MemoryStorage_t::PREFER_INTERNAL:
-            buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
+            buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
             if(!buffer){
-                buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
+                buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
                 memory_storage = MemoryStorage_t::SPIRAM; 
                 is_not_preferred = true;
             }
             break;
         case MemoryStorage_t::PREFER_SPIRAM:
-            buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
+            buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_SPIRAM | memory_raw_caps);
             if(!buffer){
-                buffer = (uint16_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
+                buffer = (uint8_t*)heap_caps_malloc(buffer_size,MALLOC_CAP_INTERNAL | memory_raw_caps);
                 memory_storage = MemoryStorage_t::INTERNAL; 
                 is_not_preferred = true;
             }
@@ -85,7 +86,8 @@ class EBuffer{
         default:
             break;
         }
-
+        buffer16 = reinterpret_cast<uint16_t*>(buffer);
+        buffer32 = reinterpret_cast<uint32_t*>(buffer);
         if (!buffer) {return MemoryResult_t::FAILED;}
         if(is_not_preferred){return MemoryResult_t::NOT_PREFERRED;}
         return MemoryResult_t::SUCCESFUL;

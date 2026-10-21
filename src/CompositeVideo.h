@@ -18,13 +18,17 @@
 /**
  * Change log:
  *
- * Oct 2026 - Original code from https://github.com/rossumur/esp_8_bit
- *            Modified by Marcio Teixeira to extract Analog color generaation
+ * Oct 2026 - Original code from https://github.com/rossumur/esp_8_bit and
+ *            Modified by Marcio Teixeira to extract Analog color generation
  *            and make it compatible with Bitluni's code
  * 
  */
 #ifndef ANALOG_VIDEO_H
     #define ANALOG_VIDEO_H
+
+#ifndef COLORBURST
+    #define COLORBURST 1
+#endif
 
 #include <Arduino.h>
 #include "esp_heap_caps.h"
@@ -39,7 +43,7 @@
 #include "driver/gpio.h"
 #include "driver/i2s.h"
 #include "CompositeColor.h"
-#include <easy_heap.h>
+#include <EBuffer.h>
 
 enum class VideoResolution_t{
     VIDEO_RES_NTSC_256x240P,
@@ -74,14 +78,17 @@ constexpr VideoMode_t _video_modes[] = {
 class CompositeVideoBuffer{
     VideoMode_t video_mode;
     public:
-    EBuffer buffer;
+    EBuffer e_buffer;
+    uint16_t* buffer = nullptr;
     uint16_t xres, yres;
     MemoryResult_t init(VideoResolution_t resolution, MemoryStorage_t storage) {
         video_mode = _video_modes[static_cast<uint8_t>(resolution)];
-        uint32_t total_buffer_size = video_mode.height * video_mode.width * sizeof(uint8_t*);
+        uint32_t total_buffer_size = video_mode.height * video_mode.width * sizeof(uint16_t*);
         xres = video_mode.width;
         yres = video_mode.height;
-        return buffer.init(total_buffer_size, storage, MemoryType_t::BIT_SIZE_8);
+        MemoryResult_t result = e_buffer.init(total_buffer_size, storage, MemoryType_t::BIT_SIZE_8);
+        buffer = e_buffer.buffer16;
+        return result;
     }
 
     VideoMode_t getVideoMode(){return video_mode;}
@@ -89,7 +96,7 @@ class CompositeVideoBuffer{
     void deinit(){
         xres = 0;
         yres = 0;
-        buffer.deinit();
+        e_buffer.deinit();
     }
     ~CompositeVideoBuffer(){
         deinit();
@@ -98,68 +105,49 @@ class CompositeVideoBuffer{
 
 namespace CompositeVideoBlitter {
 
+    VideoMode_t _video_mode;
+    CompositeVideoBuffer* frame_buffer = nullptr;
 
-VideoMode_t _video_mode;
-CompositeVideoBuffer* frame_buffer = nullptr;
-uint16_t y_lut[256];
-uint16_t uv_lut[256];
+    // Color stuff:
+    uint16_t y_lut[256];
+    int16_t uv_lut[256];
 
-    inline void double_dot422(int x, int y, CompositeColor c0, CompositeColor c1)
-    {
-        uint8_t* line = frame_buffer->lines[y];
-        size_t index = (x & ~1) * 2;
+    struct RGBContribution {
+        int32_t y;
+        int32_t u;
+        int32_t v;
+    };
 
-        line[index + 0] = c0.y;
-        line[index + 1] = c1.y;
-        line[index + 2] = (c0.u + c1.u) >> 1;
-        line[index + 3] = (c0.v + c1.v) >> 1;
+    static RGBContribution redLUT[32];
+    static RGBContribution greenLUT[64];
+    static RGBContribution blueLUT[32];
+
+    void initRGB565LUTs(){
+        for (int r = 0; r < 32; r++) {
+            const int R = (r << 3) | (r >> 2);
+            redLUT[r] = {
+                (int16_t)(299 * R),
+                (int16_t)(-32 * R),
+                (int16_t)(-128 * R)
+            };
+        }
+        for (int g = 0; g < 64; g++){
+            const int G = (g << 2) | (g >> 4);
+            greenLUT[g] = {
+                (int16_t)(587 * G),
+                (int16_t)(-128 * G),
+                (int16_t)(64 * G)
+            };
+        }
+        for (int b = 0; b < 32; b++){
+            const int B = (b << 3) | (b >> 2);
+            blueLUT[b] = {
+                (int16_t)(114 * B),
+                (int16_t)(96 * B),
+                (int16_t)(64 * B)
+            };
+        }
     }
-
-inline void set_pixel(uint16_t x, uint16_t y, CompositeColor color)
-{
-	uint8_t* line = frame_buffer->lines[y];
-    switch (_video_mode.color_mode){
-    case SubSampling_t::SUBSAMPLING_444:{
-		size_t index = x * 3;
-
-		line[index + 0] = color.y;
-		line[index + 1] = color.u;
-		line[index + 2] = color.v;
-        break;
-    }
-    case SubSampling_t::SUBSAMPLING_422:{
-		uint16_t evenX = x & ~1;
-		size_t block_index = evenX * 2;
-
-		line[block_index + (x & 1)] = color.y;
-		line[block_index + 2] = color.u;
-		line[block_index + 3] = color.v;
-        break;
-    }
-    case SubSampling_t::SUBSAMPLING_400:
-        line[x] = color.y;
-        break;
-    default:
-        break;
-    }
-}
-
-void frame_clear(CompositeColor color)
-{
-	for (uint32_t y = 0; y < _video_mode.height; y++) {
-        for (uint32_t x = 0; x < _video_mode.width; x++){set_pixel(x,y,color);}
-	}
-}
-/**
- * Creates a framebuffer. The caps argument can be one of the following:
- *
- *   MALLOC_CAP_8BIT   - Accessible in single bytes
- *   MALLOC_CAP_32BIT  - All access must be 32-bit aligned
- *
- * The latter allows the ESP32 to store the data in IRAM (instruction RAM),
- * but makes access to individual bytes more difficult.
- */
-
 
 //====================================================================================================
 //====================================================================================================
@@ -331,7 +319,7 @@ static inline uint16_t IRAM_ATTR clamp_dac(int32_t val) {
 	return (val > MAX_DAC_1V) ? MAX_DAC_1V : val;
 }
 
-static void init_yuv_luts(){
+static void initYUVLUTs(){
     uint32_t black = BLACK_LEVEL;
     uint32_t white = WHITE_LEVEL;
     int32_t luma_range = (uint32_t)white - (uint32_t)black;
@@ -344,7 +332,8 @@ static void init_yuv_luts(){
 void setup_video(CompositeVideoBuffer& render_buffer){
     _video_mode = render_buffer.getVideoMode();
     frame_buffer = &render_buffer;
-	init_yuv_luts();
+	initYUVLUTs();
+    initRGB565LUTs();
     if(_video_mode.is_pal){
         pal_init();
     }
@@ -352,7 +341,7 @@ void setup_video(CompositeVideoBuffer& render_buffer){
         ntsc_init();
     }
 
-	frame_clear(CompositeColor());
+	//frame_clear(CompositeColor());
 	video_init_hw(_video_mode.line_width, _samples_per_cc);
 }
 
@@ -389,7 +378,7 @@ void perf(){};
         }
     }
 
-    void IRAM_ATTR blit_pal(uint8_t* src, uint16_t* dst)
+    void IRAM_ATTR blit_pal(uint16_t* src, uint16_t* dst)
     {
         // i wont use pal by now
         /*
@@ -515,70 +504,50 @@ void perf(){};
         _active_start = usec(_samples_per_cc == 4 ? 10 : 10.5);
         _hsync = usec(4.7);
     }
+    #define CLAMP8(value) (value > 255 ? 255 : value)
 
-    // draw a line of game in NTSC
-    void IRAM_ATTR blit_ntsc(uint8_t* src, uint16_t* dst)
-    {   
-        switch (_video_mode.color_mode){
-        case SubSampling_t::SUBSAMPLING_444:
-            for(int i = 0; i < _video_mode.width; i += 2){
-                uint8_t y0 = src[0];
-                uint8_t u0 = src[1];
-                uint8_t v0 = src[2];
+    struct EncodedColor {
+        uint16_t y;
+        int16_t u;
+        int16_t v;
+    };
 
-                uint8_t y1 = src[3];
-                uint8_t u1 = src[4];
-                uint8_t v1 = src[5];
+    static inline EncodedColor IRAM_ATTR encodeRGB565(uint16_t pixel)
+    {
+        const RGBContribution& r = redLUT[(pixel >> 11) & 0x1F];
+        const RGBContribution& g = greenLUT[(pixel >> 5) & 0x3F];
+        const RGBContribution& b = blueLUT[pixel & 0x1F];
 
-                // Average or select a stable chroma vector for the color clock pair 
-                // to preserve subcarrier phase integrity while keeping luma independent
-                int16_t u_val = uv_lut[(u0 + u1) / 2];
-                int16_t v_val = uv_lut[(v0 + v1) / 2];
+        const int32_t ySum = r.y + g.y + b.y;
+        const int32_t uSum = r.u + g.u + b.u;
+        const int32_t vSum = r.v + g.v + b.v;
 
-                dst[0] = clamp_dac(y_lut[y0] - u_val);
-                dst[1] = clamp_dac(y_lut[y0] + v_val);
-                dst[2] = clamp_dac(y_lut[y1] + u_val);
-                dst[3] = clamp_dac(y_lut[y1] - v_val);
+        const uint8_t y = CLAMP8((ySum + 500) / 1000);
+        const uint8_t u = CLAMP8(128 + (uSum + 127) / 255);
+        const uint8_t v = CLAMP8(128 + (vSum + 127) / 255);
 
-                dst += 4;
-                src += 6;
-            }
-            break;
-        case SubSampling_t::SUBSAMPLING_422:
-            for(int i = 0; i < _video_mode.width; i += 2){
-                uint8_t y0 = src[0];
-                uint8_t y1 = src[1];
-                uint8_t u = src[2];
-                uint8_t v = src[3];
-                int16_t u_val = uv_lut[u];
-                int16_t v_val = uv_lut[v];
-                dst[0] = clamp_dac(y_lut[y0] - u_val);
-                dst[1] = clamp_dac(y_lut[y0] + v_val);
-                dst[2] = clamp_dac(y_lut[y1] + u_val);
-                dst[3] = clamp_dac(y_lut[y1] - v_val);
+        return {
+            y_lut[y],
+            uv_lut[u],
+            uv_lut[v]
+        };
+    }
 
-                dst += 4;
-                src += 4;
-            }
-            break;
-        case SubSampling_t::SUBSAMPLING_400:
-            for(int i = 0; i <  _video_mode.width; i += 2){
-                uint16_t ly0 = y_lut[src[0]];
-                uint16_t ly1 = y_lut[src[1]];
+    void IRAM_ATTR blit_ntsc(const uint16_t* src, uint16_t* dst)
+    {
+        for (int i = 0; i < _video_mode.width; i += 2) {
+            const EncodedColor c0 = encodeRGB565(src[0]);
+            const EncodedColor c1 = encodeRGB565(src[1]);
 
-                dst[0] = ly0;
-                dst[1] = ly0;
-                dst[2] = ly1;
-                dst[3] = ly1;
+            dst[0] = clamp_dac(c0.y - c0.u);
+            dst[1] = clamp_dac(c0.y + c0.v);
+            dst[2] = clamp_dac(c1.y + c1.u);
+            dst[3] = clamp_dac(c1.y - c1.v);
 
-                dst += 4;
-                src += 2;
-            }
-        break;
-
-        default:
-            break;
+            src += 2;
+            dst += 4;
         }
+
         END_TIMING();
     }
     
@@ -589,18 +558,18 @@ void perf(){};
             case 4:
                 // 4 samples per color clock
                 for (i = _hsync; i < _hsync + (4*10); i += 4) {
-                    if(_video_mode.color_mode == SubSampling_t::SUBSAMPLING_444 or _video_mode.color_mode == SubSampling_t::SUBSAMPLING_422){
+                    #if COLORBURST
                         line[i+1] = BLANKING_LEVEL;
                         line[i+0] = BLANKING_LEVEL + BLANKING_LEVEL/2;
                         line[i+3] = BLANKING_LEVEL;
                         line[i+2] = BLANKING_LEVEL - BLANKING_LEVEL/2;
-                    }
-                    else{
+                    
+                    #else
                         line[i+1] = BLANKING_LEVEL;
                         line[i+0] = BLANKING_LEVEL;
                         line[i+3] = BLANKING_LEVEL;
                         line[i+2] = BLANKING_LEVEL;
-                    }
+                    #endif
                 }
                 break;
             case 3:
@@ -618,7 +587,7 @@ void perf(){};
         }
     }
 
-void IRAM_ATTR blit(uint8_t* src, uint16_t* dst)
+void IRAM_ATTR blit(uint16_t* src, uint16_t* dst)
 {
     BEGIN_TIMING();
     if(_video_mode.is_pal){blit_pal(src,dst);}
@@ -654,7 +623,7 @@ void IRAM_ATTR blanking(uint16_t* line, bool vbl)
 #ifdef ESP_PLATFORM
     void video_sync()
     {
-      if (!frame_buffer->lines)
+      if (!frame_buffer->buffer)
         return;
       int n = 0;
       if (_video_mode.is_pal) {
@@ -675,13 +644,10 @@ int get_current_scanline()
 
 // Workhorse ISR handles audio and video updates
 extern "C"
-void IRAM_ATTR video_isr(volatile void* vbuf)
-{
-    if (!frame_buffer->lines)
-        return;
+void IRAM_ATTR video_isr(volatile void* vbuf){
 
     ISR_BEGIN();
-
+    
     int i = _line_counter++;
     uint16_t* buf = (uint16_t*)vbuf;
 
@@ -692,7 +658,7 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
             } else if (i < _video_mode.height + 32) {    // active video 32-272
                 sync(buf,_hsync);
                 burst(buf);
-                blit(frame_buffer->lines[i-32],buf + _active_start);
+                blit(frame_buffer->buffer +((i -32) * _video_mode.width), buf + _active_start);
             } else if (i < 304) {                   // post render/black 272-304
                 if (i < 274)                        // slight optimization here, once you have 2 blanking buffers
                     blanking(buf,false);
@@ -705,7 +671,7 @@ void IRAM_ATTR video_isr(volatile void* vbuf)
             if (i < _video_mode.height) {                // active video
                 sync(buf,_hsync);
                 burst(buf);
-                blit(frame_buffer->lines[i],buf + _active_start);
+                blit(frame_buffer->buffer +(i * _video_mode.width), buf + _active_start);
 
             } else if (i < (_video_mode.height + 5)) {   // post render/black
                 blanking(buf,false);
