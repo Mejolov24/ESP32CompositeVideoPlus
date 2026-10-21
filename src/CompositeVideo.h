@@ -91,7 +91,8 @@ enum class Memory_t{
     ZBUFFER_FAILED,
     FRAMEBUFFER_FAILED,
     ALL_FAILED,
-    SUCCESFUL
+    SUCCESFUL,
+    NONE
 };
 
 class CompositeVideoBuffer{
@@ -137,10 +138,10 @@ class CompositeVideoBuffer{
 
     public:
     uint8_t** lines = nullptr;
-    Memory_t memory_type = Memory_t::ALL_FAILED;
+    Memory_t memory_type = Memory_t::NONE;
     uint32_t total_buffer_size = 0;
 
-    Memory_t init(VideoResolution_t resolution, SubSampling_t subsampling, Memory_t memory_type) {
+    Memory_t init(VideoResolution_t resolution, SubSampling_t subsampling, Memory_t preffered_memory) {
         video_mode = _video_modes[static_cast<uint8_t>(resolution)];
         uint32_t line_bytes = video_mode.width * SUBSAMPLING_BYTES(subsampling);
         total_buffer_size = video_mode.height * video_mode.width * sizeof(uint8_t*);
@@ -154,7 +155,7 @@ class CompositeVideoBuffer{
         }
 
         for (uint32_t y = 0; y < video_mode.height; y++) {
-            lines[y] = allocate_line_buffer(line_bytes, memory_type, memory_type);
+            lines[y] = allocate_line_buffer(line_bytes, preffered_memory, memory_type);
             if (!lines[y]) {
                 for (uint32_t x = 0; x < y; x++) heap_caps_free(lines[x]);
                 heap_caps_free(lines);

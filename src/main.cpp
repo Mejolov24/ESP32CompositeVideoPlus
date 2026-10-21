@@ -114,41 +114,18 @@ void test_rainbow_wheel(uint8_t Y)
 	}
 }
 
-void rainbow()
-{
+void rainbow() {
     uint16_t xres = graphics.xres;
     uint16_t yres = graphics.yres;
 
     for (uint16_t x = 0; x < xres; x++) {
-        float angle = ((float)x / (float)xres) * 2.0f * M_PI;
-        
-        float base_u = cosf(angle);
-        float base_v = sinf(angle);
+        float angle = (float)x / xres * 2.0f * PI;
+        uint8_t U = 128 + (uint8_t)(112.0f * cosf(angle));
+        uint8_t V = 128 + (uint8_t)(112.0f * sinf(angle));
 
         for (uint16_t y = 0; y < yres; y++) {
-            float brightness_factor = 1.0f - ((float)y / (float)yres);
-            brightness_factor = brightness_factor * brightness_factor;
-            uint8_t luma = (uint8_t)(brightness_factor * 255.0f);
-            float saturation = 127.0f * brightness_factor;
-            uint8_t u = (uint8_t)(128.0f + saturation * base_u);
-            uint8_t v = (uint8_t)(128.0f + saturation * base_v);
-
-            graphics.dotFast(x, y, {luma, u, v});
-        }
-    }
-}
-
-void color_space()
-{
-    uint16_t xres = graphics.xres;
-    uint16_t yres = graphics.yres;
-    //round((255.0 * (volume / 100.0))))
-    for (uint16_t x = 0; x < xres; x++) {
-        uint8_t U = map(x, 0, xres, 0, 255);
-
-        for (uint16_t y = 0; y < yres; y++) {
-            uint8_t V = map(y, 0, yres, 0, 255);
-            graphics.dotFast(x, y, {0, U, V});
+            uint8_t Y = map(y, 0, yres, 255, 0);
+            graphics.dotFast(x, y, {Y, U, V});
         }
     }
 }
@@ -293,7 +270,7 @@ uint16_t current_tone = 0;
 
 void subdivide()
 {
-        for(uint8_t i = 0; i < 4; i++){
+        for(uint8_t frame = 0; frame < 4; frame++){
         uint16_t xres = graphics.xres;
         uint16_t yres = graphics.yres;
         rect_stack_size = 1;
@@ -347,6 +324,7 @@ void subdivide()
                 }
             }   
         }
+    graphics.clear();
     }
 }
 
@@ -373,6 +351,7 @@ const char* ram_name(Memory_t ram) {
     switch (ram) {
         case Memory_t::SPIRAM : return "(DRAM) ";
         case Memory_t::INTERNAL : return "(SRAM) ";
+        case Memory_t::NONE : return "(Disabled) ";
         default:            return "(Unknown) ";
     }
 }
@@ -406,7 +385,7 @@ void DEVICE_INFO(){
 
     graphics.setCursor((xres/2 - 32), 16);
     graphics.print("DEVICE INFO");
-    graphics.setCursor((xres/2 - 32), 32);
+    graphics.setCursor(16, 32);
 
     print_tab_data("Model : ", chip_model_name(chip_info.model));  // string overload
     print_tab_data("Cores : ", cores);
@@ -422,15 +401,60 @@ void RAM_INFO(){
     uint16_t yres = graphics.yres;
     graphics.setCursor(xres/2 - 16, 16);
     graphics.print("RAM INFO");
-    graphics.setCursor(xres/2 - 64, 32);
+    graphics.setCursor(16, 32);
     print_tab_data("VRAM 0 (Scanout) ", ram_name(scanout_buffer.memory_type), scanout_buffer.total_buffer_size / 1024, " KB");
-    //print_tab_data("VRAM 1 (Buffering) ", ram_name(scanout_buffer.memory_type), scanout_buffer.total_buffer_size / 1024, " KB");
+    print_tab_data("VRAM 1 (Buffering) ", ram_name(frame_buffer.memory_type), frame_buffer.total_buffer_size / 1024, " KB");
     print_tab_data("VRAM 3D 0 (FRAME) ", ram_name(scene_buffer.frame_memory_type), scene_buffer.frame_buffer_size / 1024, " KB");
     print_tab_data("VRAM 3D 1 (Z) ", ram_name(scene_buffer.z_memory_type), scene_buffer.z_buffer_size / 1024, " KB");
 }
 
-void jetRenderTask(void* parameter)
-{
+#define GRID_SIZE 32
+
+void draw_grid(uint16_t offset_x, uint16_t offset_y) {
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+
+    int ox = ((offset_x % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+    int oy = ((offset_y % GRID_SIZE) + GRID_SIZE) % GRID_SIZE;
+
+    // Vertical lines — full height
+    for (int x = ox; x < xres; x += GRID_SIZE)
+        graphics.line(x, 0, x, yres, rgb565_lut[0xb01f]);
+
+    // Horizontal lines — full width
+    for (int y = oy; y < yres; y += GRID_SIZE)
+        graphics.line(0, y, xres, y, rgb565_lut[0xfc60]);
+}
+
+
+void dual_buffer(uint8_t res){
+    uint16_t xres = graphics.xres;
+    uint16_t yres = graphics.yres;
+        switch (res){
+        case 0:
+            frame_buffer.init(VideoResolution_t::VIDEO_RES_NTSC_256x240P,subsampling,Memory_t::PREFER_SPIRAM);
+            break;
+        case 1:
+            frame_buffer.init(VideoResolution_t::VIDEO_RES_NTSC_320x240P,subsampling,Memory_t::PREFER_SPIRAM);
+            break;
+        case 2:
+            frame_buffer.init(VideoResolution_t::VIDEO_RES_NTSC_336x240P,subsampling,Memory_t::PREFER_SPIRAM);
+            break;
+        }
+        delay(100);
+        graphics.set_buffer(frame_buffer);
+
+        for(uint16_t frame = 0; frame < 256; frame++){
+            draw_grid(frame,frame);
+            scanout_buffer.pushFromBuffer(frame_buffer);
+            graphics.clear();
+        }
+
+        frame_buffer.deinit();
+        graphics.set_buffer(scanout_buffer);
+}
+
+void jetRenderTask(void* parameter){
 	while (true) {
 		// Wait until scene->render() has finished.
 		ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
@@ -515,7 +539,6 @@ void test() {
         }
 
         graphics.clear();
-        delay(100);
         RAM_INFO();
         delay(5000);
         graphics.clear();
@@ -527,11 +550,18 @@ void test() {
             test_rainbow_wheel(Y);
             graphics.clear();
         }
+        display_test_name("Color Rainbow");
+        rainbow();
+        delay(5000);
+        graphics.clear();
         display_test_name("Subdivide");
         subdivide();
         graphics.clear();
         display_test_name("Fire");
         fire_test(res);
+        graphics.clear();
+        display_test_name("Double buffering");
+        dual_buffer(res);
         graphics.clear();
         display_test_name("JET ENGINE");
         test_jet();
@@ -547,8 +577,6 @@ void setup(){
     esp_pm_lock_acquire(powerManagementLock);
 
     resolution_set(resolution);
-    // setup Video
-
     // setup Jet
     scene_buffer.init(256,240,Memory_t::PREFER_INTERNAL,Memory_t::PREFER_INTERNAL);
     scene = jet.create_scene(scene_buffer);

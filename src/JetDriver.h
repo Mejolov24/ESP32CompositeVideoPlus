@@ -11,8 +11,8 @@
 
 class JetBuffer{
     public:
-    Memory_t frame_memory_type;
-    Memory_t z_memory_type;
+    Memory_t frame_memory_type = Memory_t::NONE;
+    Memory_t z_memory_type = Memory_t::NONE;
     uint16_t* frame_buffer = nullptr;
     uint16_t* z_buffer = nullptr;
     uint16_t width = 0;

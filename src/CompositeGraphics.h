@@ -84,12 +84,6 @@ class CompositeGraphics
         print(&temp[i + 1],transparent_bg);
     }
 
-    inline void clear(CompositeColor clearColor = CompositeColor{0, 128, 128})
-{
-	CompositeVideoBlitter::frame_clear(clearColor);
-
-}
-
     inline void dotFast(int x, int y, CompositeColor color)
 {
 	
@@ -123,7 +117,13 @@ class CompositeGraphics
             break;
     }
 }
+inline void clear(CompositeColor clearColor = CompositeColor{0, 128, 128}){
+	for (uint32_t y = 0; y < yres; y++) {
+        for (uint32_t x = 0; x < xres; x++){dotFast(x,y,clearColor);} // use double dot
+	}
 
+}
+    //set this to be here instead of blitter
     inline void double_dot422(int x, int y, CompositeColor c0, CompositeColor c1)
     {
         CompositeVideoBlitter::double_dot422(x,y,c0,c1);
