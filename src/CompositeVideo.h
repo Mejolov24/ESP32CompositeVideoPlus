@@ -39,17 +39,8 @@
 #include "driver/gpio.h"
 #include "driver/i2s.h"
 #include "CompositeColor.h"
+#include <easy_heap.h>
 
-enum class SubSampling_t{
-    SUBSAMPLING_444, // Full color res
-    SUBSAMPLING_422, // Half color res, almost identical to the human eye as full color. (recommended)
-    SUBSAMPLING_400  // No color
-};
-
-
-#define SUBSAMPLING_BYTES(sub) ( \
-    (sub) == SubSampling_t::SUBSAMPLING_444 ? 3 : \
-    (sub) == SubSampling_t::SUBSAMPLING_422 ? 2 : 1)
 enum class VideoResolution_t{
     VIDEO_RES_NTSC_256x240P,
     VIDEO_RES_NTSC_320x240P,
@@ -67,7 +58,6 @@ struct VideoMode_t{
     bool is_pal;
 
     uint16_t line_width;
-    SubSampling_t color_mode;
 };
 
 constexpr VideoMode_t _video_modes[] = {
@@ -81,117 +71,25 @@ constexpr VideoMode_t _video_modes[] = {
     { VideoResolution_t::VIDEO_RES_PAL_352x288P, 352, 288, true  },
     { VideoResolution_t::VIDEO_RES_PAL_384x288P, 384, 288, true  },
 };
-
-enum class Memory_t{
-    INTERNAL,
-    SPIRAM,
-    PREFER_INTERNAL,
-    PREFER_SPIRAM,
-
-    ZBUFFER_FAILED,
-    FRAMEBUFFER_FAILED,
-    ALL_FAILED,
-    SUCCESFUL,
-    NONE
-};
-
 class CompositeVideoBuffer{
-    private:
-
-    uint8_t* allocate_line_buffer(uint32_t line_bytes, Memory_t requested, Memory_t& actual) {
-        uint8_t* buffer = nullptr;
-        switch (requested) {
-            case Memory_t::INTERNAL:
-                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                actual = Memory_t::INTERNAL;
-                break;
-            case Memory_t::SPIRAM:
-                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                actual = Memory_t::SPIRAM;
-                break;
-            case Memory_t::PREFER_INTERNAL:
-                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                if (buffer) {
-                    actual = Memory_t::INTERNAL;
-                } else {
-                    buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                    actual = Memory_t::SPIRAM;
-                }
-                break;
-            case Memory_t::PREFER_SPIRAM:
-                buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                if (buffer) {
-                    actual = Memory_t::SPIRAM;
-                } else {
-                    buffer = (uint8_t*)heap_caps_malloc(line_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-                    actual = Memory_t::INTERNAL;
-                }
-                break;
-
-            default:
-                break;
-        }
-        return buffer;
-    }
-
     VideoMode_t video_mode;
-
     public:
-    uint8_t** lines = nullptr;
-    Memory_t memory_type = Memory_t::NONE;
-    uint32_t total_buffer_size = 0;
-
-    Memory_t init(VideoResolution_t resolution, SubSampling_t subsampling, Memory_t preffered_memory) {
+    EBuffer buffer;
+    uint16_t xres, yres;
+    MemoryResult_t init(VideoResolution_t resolution, MemoryStorage_t storage) {
         video_mode = _video_modes[static_cast<uint8_t>(resolution)];
-        uint32_t line_bytes = video_mode.width * SUBSAMPLING_BYTES(subsampling);
-        total_buffer_size = video_mode.height * video_mode.width * sizeof(uint8_t*);
-        video_mode.color_mode = subsampling;
-
-        // Pointer array always stays in internal RAM
-        lines = (uint8_t**)heap_caps_malloc(video_mode.height * sizeof(uint8_t*), MALLOC_CAP_INTERNAL);
-        if (!lines) {
-            memory_type = Memory_t::ALL_FAILED;
-            return Memory_t::ALL_FAILED;
-        }
-
-        for (uint32_t y = 0; y < video_mode.height; y++) {
-            lines[y] = allocate_line_buffer(line_bytes, preffered_memory, memory_type);
-            if (!lines[y]) {
-                for (uint32_t x = 0; x < y; x++) heap_caps_free(lines[x]);
-                heap_caps_free(lines);
-                lines = nullptr;
-                memory_type = Memory_t::ALL_FAILED;
-                return Memory_t::ALL_FAILED;
-            }
-        }
-        return memory_type;
+        uint32_t total_buffer_size = video_mode.height * video_mode.width * sizeof(uint8_t*);
+        xres = video_mode.width;
+        yres = video_mode.height;
+        return buffer.init(total_buffer_size, storage, MemoryType_t::BIT_SIZE_8);
     }
 
-
-    void pushFromBuffer(CompositeVideoBuffer& buffer){
-        VideoMode_t source_mode = buffer.getVideoMode();
-
-        uint32_t source_bytes = source_mode.width * SUBSAMPLING_BYTES(source_mode.color_mode);
-        uint32_t current_bytes = source_mode.width * SUBSAMPLING_BYTES(video_mode.color_mode);
-        if (source_bytes != current_bytes) return;
-
-        for (uint32_t y = 0; y < source_mode.height; y++){
-            memcpy(lines[y], buffer.lines[y], source_bytes);
-        }
-    }
-
-
-    VideoMode_t getVideoMode(){
-        return video_mode;
-    }
+    VideoMode_t getVideoMode(){return video_mode;}
 
     void deinit(){
-        if (lines) {
-            for (uint32_t y = 0; y < video_mode.height; y++)
-                if (lines[y]) heap_caps_free(lines[y]);
-            heap_caps_free(lines);
-            lines = nullptr;
-        }
+        xres = 0;
+        yres = 0;
+        buffer.deinit();
     }
     ~CompositeVideoBuffer(){
         deinit();

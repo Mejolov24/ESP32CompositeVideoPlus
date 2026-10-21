@@ -93,6 +93,7 @@ class EBuffer{
 
     void deinit(){
         heap_caps_free(buffer);
+        memory_storage = MemoryStorage_t::NONE;
     }
     ~EBuffer(){deinit();}
     
