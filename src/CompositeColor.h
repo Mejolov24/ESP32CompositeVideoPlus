@@ -82,4 +82,3 @@ constexpr std::array<CompositeColor, 65536> makeRGB565LUT()
 inline constexpr auto rgb565_lut = makeRGB565LUT();
 
 #endif
-

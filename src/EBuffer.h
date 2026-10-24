@@ -48,7 +48,7 @@ class EBuffer{
     public:
     MemoryStorage_t memory_storage = MemoryStorage_t::NONE;
     MemoryType_t memory_type = MemoryType_t::MEMORY_DEFAULT;
-    uint16_t* buffer32 = nullptr;
+    uint32_t* buffer32 = nullptr;
     uint16_t* buffer16 = nullptr;
     uint8_t* buffer = nullptr;
     uint32_t buffer_size = 0;
